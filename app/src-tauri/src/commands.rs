@@ -44,6 +44,13 @@ pub struct StripState {
     pub strip: u32,
     pub gain: f32,
     pub muted: bool,
+    pub mono: bool,
+    /// "Mute Center" — virtual strips only.
+    pub mc: bool,
+    /// Solo.
+    pub solo: bool,
+    /// Karaoke mode, 0-4 — virtual strips only (K, K-M, K-1, K-2, center-scoop).
+    pub karaoke: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,10 +117,18 @@ fn read_strip_level(api: &VoicemeeterAPI, strip: u32) -> StripLevel {
 fn read_strip(api: &VoicemeeterAPI, strip: u32) -> StripState {
     let gain = api.get_float(&format!("Strip[{strip}].Gain")).unwrap_or(0.0);
     let mute_val = api.get_float(&format!("Strip[{strip}].Mute")).unwrap_or(0.0);
+    let mono_val = api.get_float(&format!("Strip[{strip}].Mono")).unwrap_or(0.0);
+    let mc_val = api.get_float(&format!("Strip[{strip}].MC")).unwrap_or(0.0);
+    let solo_val = api.get_float(&format!("Strip[{strip}].Solo")).unwrap_or(0.0);
+    let karaoke_val = api.get_float(&format!("Strip[{strip}].K")).unwrap_or(0.0);
     StripState {
         strip,
         gain,
         muted: mute_val >= 1.0,
+        mono: mono_val >= 1.0,
+        mc: mc_val >= 1.0,
+        solo: solo_val >= 1.0,
+        karaoke: karaoke_val.round() as i32,
     }
 }
 
@@ -261,6 +276,35 @@ pub fn vm_set_mute(state: State<VmState>, strip: u32, muted: bool) -> Result<(),
         &format!("Strip[{strip}].Mute"),
         if muted { 1.0 } else { 0.0 },
     )
+}
+
+#[tauri::command]
+pub fn vm_set_mono(state: State<VmState>, strip: u32, value: bool) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].Mono"), if value { 1.0 } else { 0.0 })
+}
+
+#[tauri::command]
+pub fn vm_set_solo(state: State<VmState>, strip: u32, value: bool) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].Solo"), if value { 1.0 } else { 0.0 })
+}
+
+#[tauri::command]
+pub fn vm_set_mc(state: State<VmState>, strip: u32, value: bool) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].MC"), if value { 1.0 } else { 0.0 })
+}
+
+/// Karaoke mode, 0-4 (K, K-M, K-1, K-2, center-scoop) — virtual strips only.
+#[tauri::command]
+pub fn vm_set_karaoke(state: State<VmState>, strip: u32, value: i32) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].K"), value as f32)
 }
 
 #[tauri::command]

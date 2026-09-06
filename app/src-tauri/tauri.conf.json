@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
-  "productName": "MiniMeeter",
+  "productName": "Plantain",
   "version": "1.0.5",
-  "identifier": "com.minimeeter.app",
+  "identifier": "com.plantain.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,11 +13,11 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "MiniMeeter",
+        "title": "Plantain",
         "width": 420,
         "height": 340,
         "minWidth": 200,
-        "minHeight": 275,
+        "minHeight": 360,
         "resizable": true,
         "decorations": false,
         "transparent": true,

@@ -7,6 +7,10 @@ interface StripState {
   strip: number;
   gain: number;
   muted: boolean;
+  mono: boolean;
+  mc: boolean;
+  solo: boolean;
+  karaoke: number;
 }
 
 interface AllStripsState {
@@ -48,6 +52,10 @@ export type ConnectionState = "connecting" | "waiting" | "connected" | "error";
 export interface ChannelState {
   gain: number;
   muted: boolean;
+  mono: boolean;
+  mc: boolean;
+  solo: boolean;
+  karaoke: number;
 }
 
 /** How long to wait before retrying after a hard login failure. */
@@ -63,7 +71,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const [channels, setChannels] = useState<Map<number, ChannelState>>(() => {
     const map = new Map<number, ChannelState>();
     for (const ch of channelConfigs) {
-      map.set(ch.strip, { gain: ch.defaultDb, muted: false });
+      map.set(ch.strip, { gain: ch.defaultDb, muted: false, mono: false, mc: false, solo: false, karaoke: 0 });
     }
     return map;
   });
@@ -88,7 +96,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
       for (const s of strips) {
         // Don't overwrite a strip the user is currently dragging
         if (!dragging.current.has(s.strip)) {
-          next.set(s.strip, { gain: s.gain, muted: s.muted });
+          next.set(s.strip, { gain: s.gain, muted: s.muted, mono: s.mono, mc: s.mc, solo: s.solo, karaoke: s.karaoke });
         }
       }
       return next;
@@ -193,7 +201,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setGain = useCallback(async (strip: number, value: number) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: value, muted: false };
+      const current = next.get(strip) ?? { gain: value, muted: false, mono: false, mc: false, solo: false, karaoke: 0 };
       next.set(strip, { ...current, gain: value });
       return next;
     });
@@ -207,12 +215,68 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setMute = useCallback(async (strip: number, muted: boolean) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted };
+      const current = next.get(strip) ?? { gain: 0, muted, mono: false, mc: false, solo: false, karaoke: 0 };
       next.set(strip, { ...current, muted });
       return next;
     });
     try {
       await invoke("vm_set_mute", { strip, muted });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  const setMono = useCallback(async (strip: number, value: boolean) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, muted: false, mono: value, mc: false, solo: false, karaoke: 0 };
+      next.set(strip, { ...current, mono: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_mono", { strip, value });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  const setSolo = useCallback(async (strip: number, value: boolean) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: false, solo: value, karaoke: 0 };
+      next.set(strip, { ...current, solo: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_solo", { strip, value });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  const setMc = useCallback(async (strip: number, value: boolean) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: value, solo: false, karaoke: 0 };
+      next.set(strip, { ...current, mc: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_mc", { strip, value });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  const setKaraoke = useCallback(async (strip: number, value: number) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: false, solo: false, karaoke: value };
+      next.set(strip, { ...current, karaoke: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_karaoke", { strip, value });
     } catch {
       // Silently fail — polling will correct state
     }
@@ -242,6 +306,10 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     busGains,
     setGain,
     setMute,
+    setMono,
+    setSolo,
+    setMc,
+    setKaraoke,
     startDragging,
     stopDragging,
     launchVoicemeeter,

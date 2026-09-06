@@ -1,10 +1,10 @@
 [package]
-name = "minimeeter"
+name = "plantain"
 version = "1.0.5"
 edition = "2021"
 
 [lib]
-name = "minimeeter_lib"
+name = "plantain_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

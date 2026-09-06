@@ -1,5 +1,8 @@
 export type AccentSource = "system" | "custom";
 
+/** How channel gain controls are drawn — vertical faders or compact rotary knobs. */
+export type ControlMode = "fader" | "knob";
+
 /** A named window size the user can snap to from the titlebar. */
 export interface WindowPreset {
   name: string;
@@ -37,10 +40,14 @@ export interface StyleSettings {
   accentSource: AccentSource;
   customAccentColor: string;
   faderColumnWidth: number;
+  /** Toggled by the titlebar fader/knob switch. */
+  controlMode: ControlMode;
   background: BackgroundStyle;
   showOutputLevel: boolean;
   /** Keep the window above other windows. Toggled by the titlebar pin. */
   alwaysOnTop: boolean;
+  /** Disable manual window resizing. Toggled by the titlebar lock. */
+  sizeLocked: boolean;
   /** Opacity of the entire window, chrome and backdrop included (0.2 - 1). */
   globalOpacity: number;
   /** Named window sizes, reachable by right-clicking the minimize button. */
@@ -70,9 +77,11 @@ export const DEFAULT_STYLE_SETTINGS: StyleSettings = {
   accentSource: "system",
   customAccentColor: "#3a86ff",
   faderColumnWidth: 0,
+  controlMode: "fader",
   background: { ...DEFAULT_BACKGROUND_STYLE },
   showOutputLevel: false,
   alwaysOnTop: false,
+  sizeLocked: false,
   globalOpacity: 1,
   windowPresets: [...DEFAULT_WINDOW_PRESETS],
 };

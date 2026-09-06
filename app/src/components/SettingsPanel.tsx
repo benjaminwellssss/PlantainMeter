@@ -464,14 +464,17 @@ export default function SettingsPanel({
                             ))}
                           </select>
 
-                          <label className={`flex items-center gap-1 ${smallText} text-white/70 cursor-pointer select-none shrink-0`}>
+                          <label
+                            className={`flex items-center gap-1 ${smallText} text-white/70 cursor-pointer select-none shrink-0`}
+                            title="Every fader always has a mute button — this only enables a global hotkey for it"
+                          >
                             <input
                               type="checkbox"
                               checked={ch.hasMute}
                               onChange={(e) => updateChField(idx, "hasMute", e.target.checked)}
                               className="accent-[var(--accent)] cursor-pointer"
                             />
-                            Mute
+                            Hotkey
                           </label>
 
                           <button
@@ -515,9 +518,10 @@ export default function SettingsPanel({
                               <span>dB</span>
                             </div>
 
-                            {/* Default — what a double-click on the fader snaps to */}
+                            {/* Startup gain — shown before the app connects to Voicemeeter.
+                                Double-click on the fader always snaps to 0 dB (unity), not this value. */}
                             <div className={`flex items-center gap-1 ${smallText} text-white/60 flex-wrap`}>
-                              <span className={rowLabelCls}>Default</span>
+                              <span className={rowLabelCls}>Startup</span>
                               <input
                                 type="number"
                                 className={`${inputCls} ${smallText} w-[clamp(30px,7vw,44px)] px-1 py-[1px] text-center`}
@@ -528,12 +532,12 @@ export default function SettingsPanel({
                               {defaultOutOfRange && (
                                 <span
                                   className="text-amber-300/80 cursor-help"
-                                  title={`Outside this channel's range — a double-click will land on ${clampedDefault} dB instead.`}
+                                  title={`Outside this channel's range — will show as ${clampedDefault} dB until Voicemeeter connects.`}
                                 >
                                   ⚠
                                 </span>
                               )}
-                              <span className="text-white/35">double-click the fader</span>
+                              <span className="text-white/35">shown before Voicemeeter connects</span>
                             </div>
 
                             {/* Meter scale — double-click slider to reset to 1x */}

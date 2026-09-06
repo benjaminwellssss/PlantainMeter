@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import type { A1Device } from "../config";
-import type { WindowPreset } from "../types/style";
+import type { ControlMode, WindowPreset } from "../types/style";
 import { invoke } from "@tauri-apps/api/core";
 
 interface TitlebarProps {
@@ -16,6 +16,14 @@ interface TitlebarProps {
   reconnecting?: boolean;
   pinned: boolean;
   onPinToggle: () => void;
+  sizeLocked: boolean;
+  onSizeLockToggle: () => void;
+  controlMode: ControlMode;
+  onControlModeToggle: () => void;
+  /** Shrinks the window to the smallest usable size for the current control mode. */
+  onShrinkToFit: () => void;
+  /** Smallest usable size for the current control mode — presets can't go below this. */
+  minSize: { width: number; height: number };
   /** Sizes offered when right-clicking the minimize button. */
   windowPresets: WindowPreset[];
 }
@@ -26,7 +34,7 @@ function formatDb(v: number): string {
   return `${sign}${String(Math.abs(rounded)).padStart(2, "0")}dB`;
 }
 
-export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettingsClick, busGain, showOutputLevel, reconnecting, pinned, onPinToggle, windowPresets }: TitlebarProps) {
+export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettingsClick, busGain, showOutputLevel, reconnecting, pinned, onPinToggle, sizeLocked, onSizeLockToggle, controlMode, onControlModeToggle, onShrinkToFit, minSize, windowPresets }: TitlebarProps) {
   const appWindow = getCurrentWindow();
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -53,7 +61,14 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
   const applyPreset = async (preset: WindowPreset) => {
     setPresetMenuOpen(false);
     try {
-      await appWindow.setSize(new LogicalSize(preset.width, preset.height));
+      // Never let a preset shrink below what the current control mode/channel
+      // count actually needs — that's what caused columns to get cropped.
+      await appWindow.setSize(
+        new LogicalSize(
+          Math.max(preset.width, minSize.width),
+          Math.max(preset.height, minSize.height),
+        ),
+      );
     } catch {
       // Nothing useful to do — the window simply stays its current size.
     }
@@ -88,8 +103,7 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
       // z-[45] keeps the titlebar above the connection overlay (z-40) so the window
       // stays closable/movable while waiting for Voicemeeter. The settings panel
       // (z-50) is still allowed to cover it.
-      className="relative z-[45] flex items-center h-[clamp(24px,8dvh,36px)] px-[clamp(6px,2vw,12px)] select-none shrink-0"
-      style={{ backgroundColor: "var(--accent)" }}
+      className="glass-titlebar relative z-[45] flex items-center h-[clamp(24px,8dvh,36px)] px-[clamp(6px,2vw,12px)] select-none shrink-0"
       data-tauri-drag-region
     >
       {/* Pin / always-on-top */}
@@ -113,6 +127,27 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
         </svg>
       </button>
 
+      {/* Lock / unlock window size */}
+      <button
+        className="w-[clamp(16px,4vw,24px)] h-[clamp(16px,4dvh,24px)] flex items-center justify-center rounded-[3px] border-none cursor-pointer hover:bg-white/20 mr-[clamp(2px,0.5vw,6px)] shrink-0"
+        style={{
+          color: "var(--accent-fg)",
+          backgroundColor: sizeLocked ? "rgba(255,255,255,0.28)" : "transparent",
+          opacity: sizeLocked ? 1 : 0.65,
+        }}
+        onClick={onSizeLockToggle}
+        title={sizeLocked ? "Unlock window size" : "Lock window size — disable manual resizing"}
+        aria-pressed={sizeLocked}
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" className="w-[clamp(10px,2.5vw,14px)] h-[clamp(10px,2.5vw,14px)]">
+          {sizeLocked ? (
+            <path d="M12 2a4 4 0 0 0-4 4v3H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4Zm0 2a2 2 0 0 1 2 2v3h-4V6a2 2 0 0 1 2-2Z" />
+          ) : (
+            <path d="M18 8h-1V6a5 5 0 0 0-9.9-1 1 1 0 1 0 1.98.3A3 3 0 0 1 15 6v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Z" />
+          )}
+        </svg>
+      </button>
+
       {/* Settings gear */}
       <button
         className="w-[clamp(16px,4vw,24px)] h-[clamp(16px,4dvh,24px)] flex items-center justify-center rounded-[3px] border-none cursor-pointer hover:bg-white/20 mr-[clamp(2px,0.5vw,6px)] shrink-0"
@@ -133,13 +168,35 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
         </svg>
       </button>
 
+      {/* Fader / knob toggle */}
+      <button
+        className="w-[clamp(16px,4vw,24px)] h-[clamp(16px,4dvh,24px)] flex items-center justify-center rounded-[3px] border-none cursor-pointer hover:bg-white/20 mr-[clamp(2px,0.5vw,6px)] shrink-0"
+        style={{ color: "var(--accent-fg)", backgroundColor: "transparent" }}
+        onClick={onControlModeToggle}
+        title={controlMode === "fader" ? "Switch to knobs" : "Switch to faders"}
+      >
+        {controlMode === "fader" ? (
+          <svg viewBox="0 0 20 20" fill="none" className="w-[clamp(10px,2.5vw,14px)] h-[clamp(10px,2.5vw,14px)]">
+            <path d="M4 2v16M10 2v16M16 2v16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <circle cx="4" cy="7" r="2" fill="currentColor" />
+            <circle cx="10" cy="13" r="2" fill="currentColor" />
+            <circle cx="16" cy="5" r="2" fill="currentColor" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 20 20" fill="none" className="w-[clamp(10px,2.5vw,14px)] h-[clamp(10px,2.5vw,14px)]">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" />
+            <path d="M10 10 L10 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        )}
+      </button>
+
       {/* App title — hides at very small widths */}
       <span
-        className="text-[clamp(0.55rem,2.2vw,0.75rem)] font-bold mr-auto truncate hidden min-[260px]:block"
+        className="text-crisp text-[clamp(0.6rem,2.3vw,0.8rem)] font-extrabold uppercase tracking-[0.15em] mr-auto truncate hidden min-[260px]:block"
         style={{ color: "var(--accent-fg)" }}
         data-tauri-drag-region
       >
-        MiniMeeter
+        Plantain
       </span>
 
       {/* Reconnecting indicator — engine restart or Voicemeeter briefly gone */}
@@ -165,8 +222,8 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
       {/* A1 output gain readout */}
       {showOutputLevel && (
         <span
-          className="text-[clamp(0.5rem,1.6vw,0.65rem)] font-bold tabular-nums whitespace-nowrap mr-[clamp(3px,0.8vw,6px)] hidden min-[260px]:block"
-          style={{ color: "var(--accent-fg)", opacity: 0.8 }}
+          className="font-display text-crisp text-[clamp(0.55rem,1.7vw,0.7rem)] font-bold tabular-nums whitespace-nowrap mr-[clamp(3px,0.8vw,6px)] hidden min-[260px]:block"
+          style={{ color: "var(--accent-fg)", opacity: 0.9 }}
           title="A1 output gain"
         >
           {formatDb(busGain)}
@@ -176,7 +233,7 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
       {/* A1 picker */}
       <div className="flex items-center gap-[clamp(2px,0.5vw,4px)] mr-[clamp(4px,1vw,8px)]">
         <span
-          className="text-[clamp(0.5rem,1.8vw,0.65rem)] font-bold hidden min-[240px]:block"
+          className="text-crisp text-[clamp(0.55rem,1.9vw,0.7rem)] font-extrabold hidden min-[240px]:block"
           style={{ color: "var(--accent-fg)" }}
         >
           A1:
@@ -198,6 +255,24 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
 
       {/* Window controls */}
       <div className="flex items-center gap-[2px]">
+        {/* Shrink to the smallest usable size for the current control mode */}
+        <button
+          className="w-[clamp(16px,4vw,24px)] h-[clamp(16px,4dvh,24px)] flex items-center justify-center rounded-[3px] border-none cursor-pointer hover:bg-white/20"
+          style={{ color: "var(--accent-fg)", backgroundColor: "transparent" }}
+          onClick={onShrinkToFit}
+          title={`Shrink to smallest size (${controlMode === "knob" ? "knobs" : "faders"})`}
+        >
+          <svg viewBox="0 0 20 20" fill="none" className="w-[clamp(9px,2.2vw,12px)] h-[clamp(9px,2.2vw,12px)]">
+            <path
+              d="M8 3 L8 7 L4 7 M12 3 L12 7 L16 7 M8 17 L8 13 L4 13 M12 17 L12 13 L16 13"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+
         {/* Minimize — right-click opens the window-size presets */}
         <div className="relative" ref={presetMenuRef}>
           <button

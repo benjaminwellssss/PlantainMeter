@@ -1,7 +1,18 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import type { A1Device } from "./config";
+import {
+  modeKindFor,
+  FADER_MIN_HEIGHT,
+  KNOB_MIN_HEIGHT,
+  FADER_COLUMN_MIN_WIDTH,
+  KNOB_COLUMN_MIN_WIDTH,
+  ROW_PADDING_MIN,
+  ROW_GAP_MIN,
+  WINDOW_MIN_WIDTH,
+} from "./config";
 import { useVoicemeeter } from "./hooks/useVoicemeeter";
 import { useAccentColor } from "./hooks/useAccentColor";
 import { useChannelConfig } from "./hooks/useChannelConfig";
@@ -11,6 +22,7 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import type { StyleSettings } from "./types/style";
 import Titlebar from "./components/Titlebar";
 import Fader from "./components/Fader";
+import Knob from "./components/Knob";
 import BackgroundLayer from "./components/BackgroundLayer";
 import SettingsPanel from "./components/SettingsPanel";
 import ConnectionOverlay from "./components/ConnectionOverlay";
@@ -93,6 +105,22 @@ export default function App() {
     saveStyle({ ...style, alwaysOnTop: !style.alwaysOnTop });
   };
 
+  // Reads from `style` rather than `effectiveSettings`, same as the pin, so a
+  // live settings preview can't switch the control layout as a side effect.
+  const toggleControlMode = () => {
+    saveStyle({ ...style, controlMode: style.controlMode === "fader" ? "knob" : "fader" });
+  };
+
+  // Keep the OS-level resizable flag in sync with the saved lock preference.
+  useEffect(() => {
+    if (!styleLoaded) return;
+    getCurrentWindow().setResizable(!style.sizeLocked).catch(() => {});
+  }, [style.sizeLocked, styleLoaded]);
+
+  const toggleSizeLock = () => {
+    saveStyle({ ...style, sizeLocked: !style.sizeLocked });
+  };
+
   // Whole-window opacity. Uses effectiveSettings so dragging the slider in
   // Settings previews live, unlike the pin which must not follow previews.
   useEffect(() => {
@@ -101,6 +129,54 @@ export default function App() {
   }, [effectiveSettings.globalOpacity, styleLoaded]);
 
   const { channels: channelConfigs, saveChannels, outputs, saveOutputs, meterDecay, saveMeterDecay, loaded, needsOutputSetup, setNeedsOutputSetup } = useChannelConfig();
+
+  // Smallest usable window size for the current control mode — width scales
+  // with the channel count so shrinking never squeezes a column narrower
+  // than its control's own minimum (a knob must never get smooshed).
+  const minWindowSize = useMemo(() => {
+    const count = Math.max(channelConfigs.length, 1);
+    const columnWidth = style.controlMode === "knob" ? KNOB_COLUMN_MIN_WIDTH : FADER_COLUMN_MIN_WIDTH;
+    const height = style.controlMode === "knob" ? KNOB_MIN_HEIGHT : FADER_MIN_HEIGHT;
+    const width = Math.max(
+      WINDOW_MIN_WIDTH,
+      count * columnWidth + (count - 1) * ROW_GAP_MIN + ROW_PADDING_MIN * 2,
+    );
+    return { width, height };
+  }, [style.controlMode, channelConfigs.length]);
+
+  // Keeps the OS-enforced minimum window size in sync, so a manual resize
+  // (not just the shrink-to-fit button) can't go smaller than this either.
+  // Self-heals if the window is already smaller than the new floor (e.g. a
+  // size saved from before a control-mode switch) — resizing up rather than
+  // just tightening the constraint going forward, so content is never left
+  // clipped below the visible minimum.
+  useEffect(() => {
+    if (!styleLoaded) return;
+    const win = getCurrentWindow();
+    win.setMinSize(new LogicalSize(minWindowSize.width, minWindowSize.height)).catch(() => {});
+
+    (async () => {
+      try {
+        const scale = await win.scaleFactor();
+        const logical = (await win.innerSize()).toLogical(scale);
+        if (logical.width < minWindowSize.width || logical.height < minWindowSize.height) {
+          await win.setSize(
+            new LogicalSize(
+              Math.max(logical.width, minWindowSize.width),
+              Math.max(logical.height, minWindowSize.height),
+            ),
+          );
+        }
+      } catch {
+        // Non-critical — the OS-level min-size constraint above still applies
+      }
+    })();
+  }, [minWindowSize, styleLoaded]);
+
+  const shrinkToFit = () => {
+    getCurrentWindow().setSize(new LogicalSize(minWindowSize.width, minWindowSize.height)).catch(() => {});
+  };
+
   const {
     connection,
     connected,
@@ -111,6 +187,10 @@ export default function App() {
     busGains,
     setGain,
     setMute,
+    setMono,
+    setSolo,
+    setMc,
+    setKaraoke,
     startDragging,
     stopDragging,
     launchVoicemeeter,
@@ -143,13 +223,17 @@ export default function App() {
   // Sync mute hotkey configs to Rust — shortcuts are handled entirely in Rust
   useGlobalShortcuts(channelConfigs);
 
-  // Master level for visualizers: max of all strip levels
+  // Master level for visualizers: max of all strip levels, perceptually
+  // shaped so quiet passages still drive visible motion — raw linear meter
+  // values sit low most of the time, which made every visualizer look
+  // nearly static outside of loud peaks.
   const masterLevel = useMemo(() => {
     let max = 0;
     for (const v of levels.values()) {
       if (v > max) max = v;
     }
-    return max;
+    const shaped = Math.pow(Math.min(Math.max(max, 0), 1), 0.45) * 1.15;
+    return Math.min(shaped, 1);
   }, [levels]);
 
   // Fader width CSS var
@@ -159,7 +243,7 @@ export default function App() {
     : undefined;
 
   return (
-    <div className="flex flex-col h-dvh w-dvw overflow-hidden rounded-[6px] relative isolate">
+    <div className="flex flex-col h-dvh w-dvw overflow-hidden rounded-[10px] relative isolate">
       {/* Background layer — behind all content */}
       <BackgroundLayer
         showColor={bgProps.showColor}
@@ -185,12 +269,18 @@ export default function App() {
         reconnecting={reconnecting}
         pinned={style.alwaysOnTop}
         onPinToggle={togglePinned}
+        sizeLocked={style.sizeLocked}
+        onSizeLockToggle={toggleSizeLock}
+        controlMode={style.controlMode}
+        onControlModeToggle={toggleControlMode}
+        onShrinkToFit={shrinkToFit}
+        minSize={minWindowSize}
         windowPresets={effectiveSettings.windowPresets ?? []}
       />
 
       {/* Channel faders */}
       <div
-        className="flex-1 flex items-stretch px-[clamp(6px,2vw,16px)] pt-[clamp(4px,1.5dvh,12px)] pb-[clamp(4px,1dvh,8px)] gap-[clamp(4px,1.5vw,16px)] min-h-0"
+        className="flex-1 flex items-stretch overflow-x-auto px-[clamp(16px,2.8vw,24px)] pt-[clamp(14px,2.2dvh,20px)] pb-[clamp(14px,2dvh,18px)] gap-[clamp(8px,2vw,20px)] min-h-0"
         style={faderContainerStyle}
       >
         {loaded &&
@@ -198,24 +288,36 @@ export default function App() {
             const state = channels.get(ch.strip) ?? {
               gain: ch.defaultDb,
               muted: false,
+              mono: false,
+              mc: false,
+              solo: false,
+              karaoke: 0,
             };
+            const Control = style.controlMode === "knob" ? Knob : Fader;
             return (
-              <Fader
+              <Control
                 key={ch.strip}
                 label={ch.label}
                 value={state.gain}
                 min={ch.minDb}
                 max={ch.maxDb}
-                hasMute={ch.hasMute}
                 muted={state.muted}
+                mono={state.mono}
+                solo={state.solo}
+                mc={state.mc}
+                karaoke={state.karaoke}
+                modeKind={modeKindFor(ch.strip)}
                 level={levels.get(ch.strip) ?? 0}
                 levelScale={ch.levelScale ?? 1}
                 meterDecay={meterDecay}
                 onChange={(v) => setGain(ch.strip, v)}
                 onMuteToggle={(m) => setMute(ch.strip, m)}
+                onMonoToggle={(v) => setMono(ch.strip, v)}
+                onSoloToggle={(v) => setSolo(ch.strip, v)}
+                onMcToggle={(v) => setMc(ch.strip, v)}
+                onKaraokeChange={(v) => setKaraoke(ch.strip, v)}
                 onDragStart={() => startDragging(ch.strip)}
                 onDragEnd={() => stopDragging(ch.strip)}
-                defaultDb={ch.defaultDb}
               />
             );
           })}
