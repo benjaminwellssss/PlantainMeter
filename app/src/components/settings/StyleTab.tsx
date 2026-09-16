@@ -1,4 +1,10 @@
+import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  enable as autostartEnable,
+  disable as autostartDisable,
+  isEnabled as autostartIsEnabled,
+} from "@tauri-apps/plugin-autostart";
 import type { StyleSettings, WindowPreset } from "../../types/style";
 import { DEFAULT_STYLE_SETTINGS } from "../../types/style";
 import WindowStateStyleEditor from "./WindowStateStyleEditor";
@@ -24,6 +30,22 @@ export default function StyleTab({
 }: StyleTabProps) {
   const update = (patch: Partial<StyleSettings>) => {
     onChange({ ...draft, ...patch });
+  };
+
+  // Launch-on-startup is an OS registration, not a saved setting, so it
+  // applies immediately rather than on Save.
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  useEffect(() => {
+    autostartIsEnabled().then(setAutostartEnabled).catch(() => setAutostartEnabled(false));
+  }, []);
+  const handleAutostartToggle = async (checked: boolean) => {
+    setAutostartEnabled(checked);
+    try {
+      if (checked) await autostartEnable();
+      else await autostartDisable();
+    } catch {
+      setAutostartEnabled(!checked);
+    }
   };
 
   const presets: WindowPreset[] = draft.windowPresets ?? [];
@@ -248,6 +270,22 @@ export default function StyleTab({
           medText={medText}
           inputCls={inputCls}
         />
+      </div>
+
+      {/* Startup */}
+      <div className="bg-white/5 rounded-[4px] p-[clamp(4px,1vw,8px)] flex flex-col gap-[clamp(2px,0.5dvh,4px)]">
+        <span className={`${medText} font-semibold text-white/80`}>Startup</span>
+        <div className={`flex items-center gap-1 ${smallText} text-white/60 pl-[clamp(6px,1.5vw,12px)]`}>
+          <label className="flex items-center gap-1 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autostartEnabled}
+              onChange={(e) => handleAutostartToggle(e.target.checked)}
+              className="accent-[var(--accent)] cursor-pointer"
+            />
+            Launch on startup
+          </label>
+        </div>
       </div>
 
       {/* Reset */}
