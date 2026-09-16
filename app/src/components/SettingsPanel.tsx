@@ -2,11 +2,13 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ChannelConfig, A1Device } from "../config";
 import type { EditionInfo, LaunchEdition } from "../types/edition";
+import type { FxGroup } from "../types/fx";
 import type { StyleSettings } from "../types/style";
 import { DEFAULT_STYLE_SETTINGS } from "../types/style";
 import StyleTab from "./settings/StyleTab";
 import ChannelsTab from "./settings/ChannelsTab";
 import OutputsTab from "./settings/OutputsTab";
+import FxTab from "./settings/FxTab";
 import { autoDisplay } from "./settings/OutputsTab";
 import { inputCls, smallText, medText } from "./settings/shared";
 
@@ -16,6 +18,10 @@ interface SettingsPanelProps {
   outputs: A1Device[];
   meterDecay: number;
   styleSettings: StyleSettings;
+  fxGroups: FxGroup[];
+  activeFx: string[];
+  onToggleFx: (id: string) => void;
+  connected: boolean;
   /** Edition to lay strips out for (live, or last seen when disconnected). */
   edition: EditionInfo;
   editionIsLive: boolean;
@@ -25,12 +31,14 @@ interface SettingsPanelProps {
   onSaveOutputs: (outputs: A1Device[]) => void;
   onSaveMeterDecay: (decay: number) => void;
   onSaveStyle: (style: StyleSettings) => void;
+  onSaveFxGroups: (groups: FxGroup[]) => void;
   onPreviewStyle?: (style: StyleSettings | null) => void;
   onClose: () => void;
 }
 
-type Tab = "style" | "channels" | "outputs";
-const TABS: Tab[] = ["style", "channels", "outputs"];
+type Tab = "style" | "channels" | "outputs" | "fx";
+const TABS: Tab[] = ["style", "channels", "outputs", "fx"];
+const TAB_LABEL: Record<Tab, string> = { style: "Style", channels: "Channels", outputs: "Outputs", fx: "FX" };
 
 /**
  * Settings shell: tab bar, per-tab drafts seeded when the panel opens, and a
@@ -43,6 +51,10 @@ export default function SettingsPanel({
   outputs,
   meterDecay,
   styleSettings,
+  fxGroups,
+  activeFx,
+  onToggleFx,
+  connected,
   edition,
   editionIsLive,
   launchEdition,
@@ -51,6 +63,7 @@ export default function SettingsPanel({
   onSaveOutputs,
   onSaveMeterDecay,
   onSaveStyle,
+  onSaveFxGroups,
   onPreviewStyle,
   onClose,
 }: SettingsPanelProps) {
@@ -59,6 +72,7 @@ export default function SettingsPanel({
   const [outDraft, setOutDraft] = useState<A1Device[]>([]);
   const [decayDraft, setDecayDraft] = useState(0.3);
   const [styleDraft, setStyleDraft] = useState<StyleSettings>(DEFAULT_STYLE_SETTINGS);
+  const [fxDraft, setFxDraft] = useState<FxGroup[]>([]);
 
   // Seed the drafts the moment `open` flips true, during render rather than from a
   // framer-motion animation callback. Effects — including the live preview below —
@@ -73,6 +87,7 @@ export default function SettingsPanel({
       setOutDraft(outputs.map((o) => ({ ...o })));
       setDecayDraft(meterDecay);
       setStyleDraft({ ...DEFAULT_STYLE_SETTINGS, ...styleSettings });
+      setFxDraft(fxGroups.map((g) => ({ ...g, assignments: g.assignments.map((a) => ({ ...a })) })));
     }
   }
 
@@ -99,6 +114,7 @@ export default function SettingsPanel({
     // alwaysOnTop isn't editable here — carry the live value so pinning while the
     // panel is open doesn't get reverted by a stale draft.
     onSaveStyle({ ...styleDraft, alwaysOnTop: styleSettings.alwaysOnTop });
+    onSaveFxGroups(fxDraft);
     onClose();
   };
 
@@ -133,14 +149,14 @@ export default function SettingsPanel({
               {TABS.map((t) => (
                 <button
                   key={t}
-                  className={`px-[clamp(6px,1.5vw,12px)] py-[clamp(2px,0.5dvh,4px)] rounded-[3px] border-none cursor-pointer ${medText} font-semibold capitalize shrink-0`}
+                  className={`px-[clamp(6px,1.5vw,12px)] py-[clamp(2px,0.5dvh,4px)] rounded-[3px] border-none cursor-pointer ${medText} font-semibold shrink-0`}
                   style={{
                     backgroundColor: tab === t ? "var(--accent)" : "rgba(255,255,255,0.1)",
                     color: tab === t ? "var(--accent-fg)" : "rgba(255,255,255,0.7)",
                   }}
                   onClick={() => setTab(t)}
                 >
-                  {t}
+                  {TAB_LABEL[t]}
                 </button>
               ))}
             </div>
@@ -171,6 +187,19 @@ export default function SettingsPanel({
               )}
 
               {tab === "outputs" && <OutputsTab draft={outDraft} onChange={setOutDraft} />}
+
+              {tab === "fx" && (
+                <FxTab
+                  draft={fxDraft}
+                  onChange={setFxDraft}
+                  edition={edition}
+                  channels={chDraft}
+                  saved={fxGroups}
+                  active={activeFx}
+                  onToggle={onToggleFx}
+                  connected={connected}
+                />
+              )}
             </div>
 
             {/* Save / Cancel */}

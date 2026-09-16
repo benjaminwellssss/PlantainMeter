@@ -1,8 +1,7 @@
 use crate::accent::{get_system_accent_color, AccentColor};
 use crate::edition::{EditionInfo, VmEdition};
 use crate::voicemeeter::{LoginStatus, VoicemeeterAPI};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -55,17 +54,6 @@ fn detect_edition(api: &VoicemeeterAPI, state: &VmState) -> VmEdition {
 pub enum VmConnection {
     Connected { edition: EditionInfo },
     Waiting,
-}
-
-/// Maps normalized shortcut strings to Voicemeeter strip indices.
-pub struct ShortcutMap {
-    pub map: Mutex<HashMap<String, u32>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MuteShortcutConfig {
-    pub strip: u32,
-    pub hotkey: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -243,6 +231,12 @@ fn spawn_poller(polling: Arc<AtomicBool>, app_handle: AppHandle) {
                     VmConnection::Waiting
                 };
                 let _ = app_handle.emit("vm:connection", payload);
+                // FxState is taken here with the api lock already released.
+                if healthy {
+                    crate::fx::announce(&app_handle);
+                } else {
+                    crate::fx::on_connection_lost(&app_handle);
+                }
             }
 
             // ~30fps while live; back off while waiting so we do not spin on a dead API.
@@ -476,43 +470,3 @@ pub fn set_window_opacity(window_state: State<WindowState>, opacity: f64) -> Res
     Ok(())
 }
 
-#[tauri::command]
-pub fn vm_sync_shortcuts(
-    app: AppHandle,
-    shortcut_map: State<ShortcutMap>,
-    configs: Vec<MuteShortcutConfig>,
-) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
-    let manager = app.global_shortcut();
-
-    // Unregister all existing shortcuts
-    manager.unregister_all().map_err(|e| format!("{e:?}"))?;
-
-    let mut map = shortcut_map.map.lock().map_err(|e| e.to_string())?;
-    map.clear();
-
-    for config in configs {
-        if config.hotkey.is_empty() {
-            continue;
-        }
-        match config.hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-            Ok(shortcut) => {
-                let normalized = shortcut.to_string();
-                match manager.register(shortcut) {
-                    Ok(_) => {
-                        map.insert(normalized, config.strip);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to register shortcut '{}': {e:?}", config.hotkey);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to parse shortcut '{}': {e:?}", config.hotkey);
-            }
-        }
-    }
-
-    Ok(())
-}

@@ -1,10 +1,13 @@
 mod accent;
 mod commands;
 mod edition;
+mod fx;
+mod hotkeys;
 mod voicemeeter;
 
-use commands::{ShortcutMap, VmState};
-use std::collections::HashMap;
+use commands::VmState;
+use fx::FxState;
+use hotkeys::ShortcutMap;
 use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindow};
@@ -21,24 +24,7 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let shortcut_str = shortcut.to_string();
-                        let sm: tauri::State<ShortcutMap> = app.state();
-                        let strip = {
-                            let Ok(map) = sm.map.lock() else { return };
-                            match map.get(&shortcut_str) {
-                                Some(&s) => s,
-                                None => return,
-                            }
-                        };
-                        // ShortcutMap lock released — now acquire the VM lock
-                        let vs: tauri::State<VmState> = app.state();
-                        let Ok(guard) = vs.api.lock() else { return };
-                        if let Some(ref api) = *guard {
-                            let param = format!("Strip[{strip}].Mute");
-                            let current = api.get_float(&param).unwrap_or(0.0);
-                            let new_val = if current >= 1.0 { 0.0 } else { 1.0 };
-                            let _ = api.set_float(&param, new_val);
-                        }
+                        hotkeys::handle_shortcut(app, &shortcut.to_string());
                     }
                 })
                 .build(),
@@ -54,9 +40,8 @@ pub fn run() {
             connected: Arc::new(AtomicBool::new(false)),
             edition: AtomicU8::new(0),
         })
-        .manage(ShortcutMap {
-            map: Mutex::new(HashMap::new()),
-        })
+        .manage(ShortcutMap::default())
+        .manage(FxState::default())
         .manage(WindowState {
             window: Mutex::new(None),
         })
@@ -94,7 +79,10 @@ pub fn run() {
             commands::get_accent_color,
             commands::set_acrylic,
             commands::set_window_opacity,
-            commands::vm_sync_shortcuts,
+            hotkeys::vm_sync_shortcuts,
+            fx::vm_sync_fx_groups,
+            fx::vm_toggle_fx_group,
+            fx::vm_get_fx_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

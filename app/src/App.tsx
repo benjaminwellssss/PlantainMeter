@@ -9,12 +9,14 @@ import { useStyleSettings } from "./hooks/useStyleSettings";
 import { useWindowFocus } from "./hooks/useWindowFocus";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useEditionInfo } from "./hooks/useEditionInfo";
+import { useFxGroups } from "./hooks/useFxGroups";
 import type { StyleSettings } from "./types/style";
 import Titlebar from "./components/Titlebar";
 import Fader from "./components/Fader";
 import BackgroundLayer from "./components/BackgroundLayer";
 import SettingsPanel from "./components/SettingsPanel";
 import ConnectionOverlay from "./components/ConnectionOverlay";
+import FxBar from "./components/FxBar";
 
 export default function App() {
   const { style, saveStyle, loaded: styleLoaded } = useStyleSettings();
@@ -146,8 +148,12 @@ export default function App() {
     })();
   }, [connected, needsOutputSetup, saveOutputs, setNeedsOutputSetup]);
 
-  // Sync mute hotkey configs to Rust — shortcuts are handled entirely in Rust
-  useGlobalShortcuts(channelConfigs);
+  // FX preset groups: persisted here, toggled and tracked in Rust.
+  const { groups: fxGroups, active: activeFx, saveFxGroups, toggleGroup: toggleFxGroup } =
+    useFxGroups(connected);
+
+  // Sync every hotkey (mutes + FX groups) to Rust — shortcuts are handled entirely there
+  useGlobalShortcuts(channelConfigs, fxGroups);
 
   // Master level for visualizers: max of all strip levels
   const masterLevel = useMemo(() => {
@@ -227,11 +233,8 @@ export default function App() {
           })}
       </div>
 
-      {/* Bottom accent bar */}
-      <div
-        className="h-[clamp(2px,0.5dvh,4px)] shrink-0"
-        style={{ backgroundColor: "var(--accent)" }}
-      />
+      {/* Bottom accent bar — grows to show FX pills while groups are active */}
+      <FxBar groups={fxGroups} active={activeFx} onToggle={toggleFxGroup} />
 
       {/* Settings panel */}
       <SettingsPanel
@@ -240,6 +243,10 @@ export default function App() {
         outputs={outputs}
         meterDecay={meterDecay}
         styleSettings={style}
+        fxGroups={fxGroups}
+        activeFx={activeFx}
+        onToggleFx={toggleFxGroup}
+        connected={connected}
         edition={edition}
         editionIsLive={editionIsLive}
         launchEdition={launchEdition}
@@ -248,6 +255,7 @@ export default function App() {
         onSaveOutputs={saveOutputs}
         onSaveMeterDecay={saveMeterDecay}
         onSaveStyle={saveStyle}
+        onSaveFxGroups={saveFxGroups}
         onPreviewStyle={setPreviewStyle}
         onClose={() => setSettingsOpen(false)}
       />
