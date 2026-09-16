@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { enable as autostartEnable, disable as autostartDisable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ChannelConfig, A1Device } from "../config";
-import { STRIP_LABELS } from "../config";
+import type { EditionInfo, LaunchEdition } from "../types/edition";
+import { EDITION_NAMES, stripLabel, shortStripLabel } from "../lib/editions";
 import type { StyleSettings } from "../types/style";
 import { DEFAULT_STYLE_SETTINGS } from "../types/style";
 import StyleTab from "./settings/StyleTab";
@@ -14,6 +15,11 @@ interface SettingsPanelProps {
   outputs: A1Device[];
   meterDecay: number;
   styleSettings: StyleSettings;
+  /** Edition to lay strips out for (live, or last seen when disconnected). */
+  edition: EditionInfo;
+  editionIsLive: boolean;
+  launchEdition: LaunchEdition;
+  onLaunchEditionChange: (next: LaunchEdition) => void;
   onSaveChannels: (channels: ChannelConfig[]) => void;
   onSaveOutputs: (outputs: A1Device[]) => void;
   onSaveMeterDecay: (decay: number) => void;
@@ -24,7 +30,11 @@ interface SettingsPanelProps {
 
 type Tab = "channels" | "outputs" | "style";
 
-const AVAILABLE_STRIPS = [0, 1, 2, 3, 4];
+const LAUNCH_OPTIONS: { value: LaunchEdition; label: string }[] = [
+  { value: "auto", label: "Auto (last seen, else newest installed)" },
+  { value: "potato", label: "Voicemeeter Potato" },
+  { value: "banana", label: "Voicemeeter Banana" },
+];
 
 /** Stable identity for an output device across driver + name. */
 const deviceKey = (d: { driver: string; name: string }) => `${d.driver}|${d.name}`;
@@ -132,6 +142,10 @@ export default function SettingsPanel({
   outputs,
   meterDecay,
   styleSettings,
+  edition,
+  editionIsLive,
+  launchEdition,
+  onLaunchEditionChange,
   onSaveChannels,
   onSaveOutputs,
   onSaveMeterDecay,
@@ -277,13 +291,23 @@ export default function SettingsPanel({
     });
   };
 
+  const availableStrips = edition.strips.map((s) => s.index);
+
+  /**
+   * Strip options for one row: every strip of the current edition, plus this
+   * row's own strip if it is out of range (a Potato config viewed while Banana
+   * is running) so editing never silently drops a configured channel.
+   */
+  const stripOptionsFor = (strip: number): number[] =>
+    availableStrips.includes(strip) ? availableStrips : [...availableStrips, strip];
+
   const addChannel = () => {
     const usedStrips = new Set(chDraft.map((c) => c.strip));
-    const nextStrip = AVAILABLE_STRIPS.find((s) => !usedStrips.has(s)) ?? 0;
+    const nextStrip = availableStrips.find((s) => !usedStrips.has(s)) ?? 0;
     setChDraft((prev) => [
       ...prev,
       {
-        label: STRIP_LABELS[nextStrip]?.split(" ").pop() ?? `Strip ${nextStrip}`,
+        label: shortStripLabel(edition, nextStrip),
         strip: nextStrip,
         hasMute: false,
         minDb: -36,
@@ -414,12 +438,40 @@ export default function SettingsPanel({
             <div className="flex-1 overflow-y-auto flex flex-col gap-[clamp(4px,1dvh,8px)] min-h-0">
               {tab === "channels" && (
                 <>
+                  {/* Edition — which Voicemeeter we lay strips out for, and which to launch */}
+                  <div className="bg-white/5 rounded-[4px] p-[clamp(4px,1vw,8px)] flex flex-col gap-[clamp(2px,0.5dvh,4px)] shrink-0">
+                    <div className={`flex items-center gap-1 ${smallText} text-white/60 flex-wrap`}>
+                      <span className={rowLabelCls}>Edition</span>
+                      <span className="text-white/80 font-semibold">{EDITION_NAMES[edition.edition]}</span>
+                      <span className="text-white/35">
+                        {editionIsLive ? "(detected)" : "(last seen — Voicemeeter not running)"}
+                      </span>
+                    </div>
+                    <div className={`flex items-center gap-1 ${smallText} text-white/60 flex-wrap`}>
+                      <span className={rowLabelCls}>Launch</span>
+                      <select
+                        className={`${inputCls} ${smallText} px-[clamp(2px,0.3vw,4px)] py-[2px] cursor-pointer max-w-full`}
+                        style={{ colorScheme: "dark" }}
+                        value={launchEdition}
+                        onChange={(e) => onLaunchEditionChange(e.target.value as LaunchEdition)}
+                        title="Edition started by the Launch Voicemeeter button"
+                      >
+                        {LAUNCH_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
                   {chDraft.map((ch, idx) => {
                     const expanded = expandedCh === idx;
                     const clampedDefault = Math.max(ch.minDb, Math.min(ch.maxDb, ch.defaultDb));
                     const defaultOutOfRange = ch.defaultDb !== clampedDefault;
                     const { mods, key } = parseHotkey(ch.muteHotkey ?? "");
                     const bareHotkey = !!key && mods.length === 0;
+                    const stripOutOfRange = !availableStrips.includes(ch.strip);
 
                     return (
                       <div key={idx} className="bg-white/5 rounded-[4px] overflow-hidden shrink-0">
@@ -457,12 +509,20 @@ export default function SettingsPanel({
                             value={ch.strip}
                             onChange={(e) => updateChField(idx, "strip", Number(e.target.value))}
                           >
-                            {AVAILABLE_STRIPS.map((s) => (
+                            {stripOptionsFor(ch.strip).map((s) => (
                               <option key={s} value={s}>
-                                Strip {s} — {STRIP_LABELS[s]}
+                                Strip {s} — {stripLabel(edition, s)}
                               </option>
                             ))}
                           </select>
+                          {stripOutOfRange && (
+                            <span
+                              className={`${smallText} text-amber-300/80 cursor-help shrink-0`}
+                              title={`Strip ${ch.strip} does not exist in ${EDITION_NAMES[edition.edition]}. Kept so you don't lose it.`}
+                            >
+                              ⚠
+                            </span>
+                          )}
 
                           <label className={`flex items-center gap-1 ${smallText} text-white/70 cursor-pointer select-none shrink-0`}>
                             <input
@@ -609,7 +669,7 @@ export default function SettingsPanel({
                     );
                   })}
 
-                  {chDraft.length < 5 && (
+                  {chDraft.length < edition.stripCount && (
                     <button
                       className={`flex items-center justify-center gap-1 bg-white/10 hover:bg-white/15 border border-dashed border-white/20 rounded-[4px] ${medText} text-white/70 py-[clamp(4px,0.8dvh,8px)] cursor-pointer shrink-0`}
                       onClick={addChannel}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ChannelConfig } from "../config";
+import type { EditionInfo, LaunchEdition } from "../types/edition";
 
 interface StripState {
   strip: number;
@@ -33,9 +34,9 @@ interface AllBusLevels {
 }
 
 /** Payload of the `vm:connection` event emitted by the Rust polling thread. */
-interface VmConnectionPayload {
-  state: "connected" | "waiting";
-}
+type VmConnectionPayload =
+  | { state: "connected"; edition: EditionInfo }
+  | { state: "waiting" };
 
 /**
  * - `connecting` — the very first login attempt is still in flight
@@ -59,6 +60,8 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   // Once we've been live, a drop is a transient reconnect rather than a cold start,
   // and the UI should stay usable instead of throwing up a full-screen gate.
   const [everConnected, setEverConnected] = useState(false);
+  // Edition reported by the backend while connected; null until then.
+  const [liveEdition, setLiveEdition] = useState<EditionInfo | null>(null);
 
   const [channels, setChannels] = useState<Map<number, ChannelState>>(() => {
     const map = new Map<number, ChannelState>();
@@ -99,8 +102,9 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     let cancelled = false;
     let retryTimer: number | undefined;
 
-    const markConnected = () => {
+    const markConnected = (edition: EditionInfo) => {
       if (cancelled) return;
+      setLiveEdition(edition);
       setConnection("connected");
       setEverConnected(true);
       setError(null);
@@ -113,7 +117,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
         setError(null);
 
         if (status.state === "connected") {
-          markConnected();
+          markConnected(status.edition);
           const state = await invoke<AllStripsState>("vm_get_all_strips");
           if (cancelled) return;
           applyStrips(state.strips);
@@ -137,7 +141,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     const unlistenConn = listen<VmConnectionPayload>("vm:connection", (event) => {
       if (cancelled) return;
       if (event.payload.state === "connected") {
-        markConnected();
+        markConnected(event.payload.edition);
         // Resync gains/mutes — they may have changed while we were disconnected
         // (an engine restart re-reads Voicemeeter's own config).
         invoke<AllStripsState>("vm_get_all_strips")
@@ -226,15 +230,19 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     dragging.current.delete(strip);
   }, []);
 
-  /** Launch Voicemeeter Banana. Only ever called from an explicit user action. */
-  const launchVoicemeeter = useCallback(async () => {
-    await invoke("vm_run_voicemeeter");
+  /**
+   * Launch Voicemeeter. Only ever called from an explicit user action.
+   * "auto" lets the backend pick: last seen edition, else newest installed.
+   */
+  const launchVoicemeeter = useCallback(async (edition: LaunchEdition) => {
+    await invoke("vm_run_voicemeeter", { edition: edition === "auto" ? null : edition });
   }, []);
 
   return {
     connection,
     connected: connection === "connected",
     everConnected,
+    liveEdition,
     error,
     channels,
     levels,

@@ -1,8 +1,9 @@
 use crate::accent::{get_system_accent_color, AccentColor};
+use crate::edition::{EditionInfo, VmEdition};
 use crate::voicemeeter::{LoginStatus, VoicemeeterAPI};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -15,6 +16,34 @@ pub struct VmState {
     /// Whether the audio engine is currently reachable. Maintained by the polling
     /// thread, which is the only thing that can observe Voicemeeter coming back.
     pub connected: Arc<AtomicBool>,
+    /// Edition type code (1/2/3) as last reported by VBVMR_GetVoicemeeterType,
+    /// or 0 while unknown. Written by whoever observes a fresh connection.
+    pub edition: AtomicU8,
+}
+
+impl VmState {
+    pub fn current_edition(&self) -> Option<VmEdition> {
+        VmEdition::from_type_code(self.edition.load(Ordering::SeqCst) as i32)
+    }
+
+    /// The edition to lay strips out for. Banana is the historical default and
+    /// keeps the old behaviour on DLLs too old to report a type.
+    pub fn edition_or_default(&self) -> VmEdition {
+        self.current_edition().unwrap_or(VmEdition::Banana)
+    }
+}
+
+/// Ask the DLL which edition is running and remember the answer. Failure
+/// ("no server" while the engine restarts, or an old DLL) keeps the previous
+/// value so a transient blip never flips the layout.
+fn detect_edition(api: &VoicemeeterAPI, state: &VmState) -> VmEdition {
+    if let Ok(code) = api.get_voicemeeter_type() {
+        if let Some(ed) = VmEdition::from_type_code(code) {
+            state.edition.store(ed.type_code(), Ordering::SeqCst);
+            return ed;
+        }
+    }
+    state.edition_or_default()
 }
 
 /// Connection state reported to the frontend.
@@ -24,7 +53,7 @@ pub struct VmState {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum VmConnection {
-    Connected,
+    Connected { edition: EditionInfo },
     Waiting,
 }
 
@@ -74,34 +103,16 @@ pub struct AllBusLevels {
     pub levels: Vec<BusLevel>,
 }
 
-/// Monitor all 5 Banana strips — frontend decides which to display
-const MONITORED_STRIPS: &[u32] = &[0, 1, 2, 3, 4];
-
-/// Maps strip index to its first L/R channel pair for GetLevel.
-/// Banana: HW inputs (0-2) = 2 channels each, Virtual inputs (3-4) = 8 channels each.
-/// Channel layout: [0,1] [2,3] [4,5] [6..13] [14..21]
-fn strip_to_channels(strip: u32) -> (i32, i32) {
-    let base: i32 = match strip {
-        0 => 0,
-        1 => 2,
-        2 => 4,
-        3 => 6,  // Virtual Input 1: 8 channels starting at 6
-        4 => 14, // Virtual Input 2: 8 channels starting at 14
-        _ => 0,
-    };
-    (base, base + 1)
-}
-
-fn read_bus_level(api: &VoicemeeterAPI, bus: u32) -> BusLevel {
-    let base = (bus * 8) as i32;
-    let level_l = api.get_level(3, base).unwrap_or(0.0);
-    let level_r = api.get_level(3, base + 1).unwrap_or(0.0);
+fn read_bus_level(api: &VoicemeeterAPI, edition: VmEdition, bus: u32) -> BusLevel {
+    let (ch_l, ch_r) = edition.bus_level_channels(bus).unwrap_or((0, 1));
+    let level_l = api.get_level(3, ch_l).unwrap_or(0.0);
+    let level_r = api.get_level(3, ch_r).unwrap_or(0.0);
     let gain = api.get_float(&format!("Bus[{bus}].Gain")).unwrap_or(0.0);
     BusLevel { bus, level: level_l.max(level_r), gain }
 }
 
-fn read_strip_level(api: &VoicemeeterAPI, strip: u32) -> StripLevel {
-    let (ch_l, ch_r) = strip_to_channels(strip);
+fn read_strip_level(api: &VoicemeeterAPI, edition: VmEdition, strip: u32) -> StripLevel {
+    let (ch_l, ch_r) = edition.strip_level_channels(strip).unwrap_or((0, 1));
     let level_l = api.get_level(1, ch_l).unwrap_or(0.0);
     let level_r = api.get_level(1, ch_r).unwrap_or(0.0);
     StripLevel { strip, level: level_l.max(level_r) }
@@ -120,7 +131,7 @@ fn read_strip(api: &VoicemeeterAPI, strip: u32) -> StripState {
 /// Current connection state as last observed by the polling thread.
 fn current_connection(state: &VmState) -> VmConnection {
     if state.connected.load(Ordering::SeqCst) {
-        VmConnection::Connected
+        VmConnection::Connected { edition: state.edition_or_default().info() }
     } else {
         VmConnection::Waiting
     }
@@ -140,6 +151,9 @@ pub fn vm_login(state: State<VmState>, app: AppHandle) -> Result<VmConnection, S
             // rc == 1 means "logged in, but Voicemeeter is not running" -- a valid
             // handle we keep so the poller can detect the app starting up later.
             let status = api.login()?;
+            if status == LoginStatus::Connected {
+                detect_edition(&api, &state);
+            }
             *guard = Some(api);
             state
                 .connected
@@ -180,24 +194,31 @@ fn spawn_poller(polling: Arc<AtomicBool>, app_handle: AppHandle) {
                                 // Resync fully when the engine comes back, otherwise the
                                 // UI keeps showing pre-restart gains.
                                 let recovered = last_healthy != Some(true);
+                                // Re-detect on every recovery: the user may have
+                                // quit Banana and started Potato in between.
+                                let edition = if recovered {
+                                    detect_edition(api, &vm_state)
+                                } else {
+                                    vm_state.edition_or_default()
+                                };
                                 if dirty || recovered {
-                                    let strips: Vec<StripState> = MONITORED_STRIPS
-                                        .iter()
-                                        .map(|&s| read_strip(api, s))
+                                    let strips: Vec<StripState> = (0..edition.strip_count())
+                                        .map(|s| read_strip(api, s))
                                         .collect();
                                     let _ = app_handle
                                         .emit("vm:state-update", AllStripsState { strips });
                                 }
 
                                 // Always read levels (they change continuously)
-                                let levels: Vec<StripLevel> = MONITORED_STRIPS
-                                    .iter()
-                                    .map(|&s| read_strip_level(api, s))
+                                let levels: Vec<StripLevel> = (0..edition.strip_count())
+                                    .map(|s| read_strip_level(api, edition, s))
                                     .collect();
                                 let _ = app_handle.emit("vm:levels", AllStripLevels { levels });
 
-                                // Read output bus levels (A1 = Bus[0])
-                                let bus_levels = vec![read_bus_level(api, 0)];
+                                // Output bus levels for every bus of this edition
+                                let bus_levels: Vec<BusLevel> = (0..edition.bus_count())
+                                    .map(|b| read_bus_level(api, edition, b))
+                                    .collect();
                                 let _ = app_handle
                                     .emit("vm:bus-levels", AllBusLevels { levels: bus_levels });
                             }
@@ -217,7 +238,7 @@ fn spawn_poller(polling: Arc<AtomicBool>, app_handle: AppHandle) {
                 let vm_state: State<VmState> = app_handle.state();
                 vm_state.connected.store(healthy, Ordering::SeqCst);
                 let payload = if healthy {
-                    VmConnection::Connected
+                    VmConnection::Connected { edition: vm_state.edition_or_default().info() }
                 } else {
                     VmConnection::Waiting
                 };
@@ -269,9 +290,12 @@ pub fn vm_get_all_strips(state: State<VmState>) -> Result<AllStripsState, String
     let api = guard.as_ref().ok_or("Not connected")?;
     // Call is_dirty first to sync parameters
     let _ = api.is_dirty();
-    let strips = MONITORED_STRIPS
-        .iter()
-        .map(|&s| read_strip(api, s))
+    let edition = match state.current_edition() {
+        Some(ed) => ed,
+        None => detect_edition(api, &state),
+    };
+    let strips = (0..edition.strip_count())
+        .map(|s| read_strip(api, s))
         .collect();
     Ok(AllStripsState { strips })
 }
@@ -347,12 +371,35 @@ pub fn vm_restart_engine(state: State<VmState>) -> Result<(), String> {
     api.restart_engine()
 }
 
-/// Launch Voicemeeter Banana. Only ever reached from an explicit user action.
+/// Launch Voicemeeter. Only ever reached from an explicit user action.
+///
+/// `edition` is the user's launch preference; `None` means auto: the edition
+/// last seen running, else the newest edition that is installed.
 #[tauri::command]
-pub fn vm_run_voicemeeter(state: State<VmState>) -> Result<(), String> {
+pub fn vm_run_voicemeeter(
+    state: State<VmState>,
+    edition: Option<VmEdition>,
+) -> Result<VmEdition, String> {
     let guard = state.api.lock().map_err(|e| e.to_string())?;
     let api = guard.as_ref().ok_or("Not connected")?;
-    api.run_voicemeeter()
+    let chosen = edition
+        .or_else(|| state.current_edition())
+        .or_else(|| VmEdition::installed_editions().into_iter().next())
+        .ok_or("No Voicemeeter edition found in the install folder")?;
+    api.run_voicemeeter(chosen.run_type_code())?;
+    Ok(chosen)
+}
+
+/// Editions present in the install folder, newest first.
+#[tauri::command]
+pub fn vm_list_installed_editions() -> Vec<VmEdition> {
+    VmEdition::installed_editions()
+}
+
+/// The edition currently (or most recently) detected, if any.
+#[tauri::command]
+pub fn vm_get_edition(state: State<VmState>) -> Option<EditionInfo> {
+    state.current_edition().map(|e| e.info())
 }
 
 /// Every output device Voicemeeter can currently see, for the Outputs picker.

@@ -8,6 +8,7 @@ import { useChannelConfig } from "./hooks/useChannelConfig";
 import { useStyleSettings } from "./hooks/useStyleSettings";
 import { useWindowFocus } from "./hooks/useWindowFocus";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useEditionInfo } from "./hooks/useEditionInfo";
 import type { StyleSettings } from "./types/style";
 import Titlebar from "./components/Titlebar";
 import Fader from "./components/Fader";
@@ -105,6 +106,7 @@ export default function App() {
     connection,
     connected,
     everConnected,
+    liveEdition,
     error,
     channels,
     levels,
@@ -115,6 +117,10 @@ export default function App() {
     stopDragging,
     launchVoicemeeter,
   } = useVoicemeeter(channelConfigs);
+
+  // Which Voicemeeter to lay strips out for: live while connected, else last seen.
+  const { edition, isLive: editionIsLive, launchEdition, saveLaunchEdition } =
+    useEditionInfo(liveEdition);
 
   // A drop after we've been live (engine restart, device switch) is transient —
   // show it in the titlebar rather than blanking the window.
@@ -234,6 +240,10 @@ export default function App() {
         outputs={outputs}
         meterDecay={meterDecay}
         styleSettings={style}
+        edition={edition}
+        editionIsLive={editionIsLive}
+        launchEdition={launchEdition}
+        onLaunchEditionChange={saveLaunchEdition}
         onSaveChannels={saveChannels}
         onSaveOutputs={saveOutputs}
         onSaveMeterDecay={saveMeterDecay}
@@ -247,6 +257,8 @@ export default function App() {
         <ConnectionOverlay
           connection={connection}
           error={error}
+          launchEdition={launchEdition}
+          onLaunchEditionChange={saveLaunchEdition}
           onLaunch={launchVoicemeeter}
         />
       )}

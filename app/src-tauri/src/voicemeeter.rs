@@ -14,9 +14,7 @@ type FnGetLevel = unsafe extern "C" fn(c_long, c_long, *mut c_float) -> c_long;
 type FnOutputGetDeviceNumber = unsafe extern "C" fn() -> c_long;
 type FnOutputGetDeviceDesc = unsafe extern "C" fn(c_long, *mut c_long, *mut c_char, *mut c_char) -> c_long;
 type FnRunVoicemeeter = unsafe extern "C" fn(c_long) -> c_long;
-
-/// Voicemeeter Banana — the edition MiniMeeter targets (see strip layout in commands.rs).
-const VOICEMEETER_TYPE_BANANA: c_long = 2;
+type FnGetVoicemeeterType = unsafe extern "C" fn(*mut c_long) -> c_long;
 
 /// Outcome of VBVMR_Login. The DLL distinguishes "connected" from
 /// "logged in, but the Voicemeeter application isn't running" (rc == 1),
@@ -42,6 +40,7 @@ pub struct VoicemeeterAPI {
     fn_output_get_device_number: Option<FnOutputGetDeviceNumber>,
     fn_output_get_device_desc: Option<FnOutputGetDeviceDesc>,
     fn_run_voicemeeter: Option<FnRunVoicemeeter>,
+    fn_get_voicemeeter_type: Option<FnGetVoicemeeterType>,
     logged_in: bool,
 }
 
@@ -91,6 +90,8 @@ impl VoicemeeterAPI {
                 lib.get::<FnOutputGetDeviceDesc>(b"VBVMR_Output_GetDeviceDescA").ok().map(|s| *s);
             let fn_run_voicemeeter: Option<FnRunVoicemeeter> =
                 lib.get::<FnRunVoicemeeter>(b"VBVMR_RunVoicemeeter").ok().map(|s| *s);
+            let fn_get_voicemeeter_type: Option<FnGetVoicemeeterType> =
+                lib.get::<FnGetVoicemeeterType>(b"VBVMR_GetVoicemeeterType").ok().map(|s| *s);
 
             Ok(Self {
                 fn_login: *fn_login,
@@ -104,6 +105,7 @@ impl VoicemeeterAPI {
                 fn_output_get_device_number,
                 fn_output_get_device_desc,
                 fn_run_voicemeeter,
+                fn_get_voicemeeter_type,
                 _lib: lib,
                 logged_in: false,
             })
@@ -128,7 +130,7 @@ impl VoicemeeterAPI {
                 Ok(LoginStatus::NotRunning)
             }
             _ => Err(format!(
-                "VBVMR_Login failed with code {rc}. Is Voicemeeter Banana installed correctly?"
+                "VBVMR_Login failed with code {rc}. Is Voicemeeter installed correctly?"
             )),
         }
     }
@@ -142,17 +144,35 @@ impl VoicemeeterAPI {
         self.set_float("Command.Restart", 1.0)
     }
 
-    /// Launch Voicemeeter Banana via the DLL. Returns an error if the running
-    /// DLL is too old to export VBVMR_RunVoicemeeter.
-    pub fn run_voicemeeter(&self) -> Result<(), String> {
+    /// Launch a Voicemeeter edition via the DLL. `type_code` follows
+    /// VBVMR_RunVoicemeeter: 1/2/3 = 32-bit Standard/Banana/Potato, 4/5/6 = x64.
+    /// Returns an error if the DLL is too old to export VBVMR_RunVoicemeeter.
+    pub fn run_voicemeeter(&self, type_code: c_long) -> Result<(), String> {
         let f = self
             .fn_run_voicemeeter
             .ok_or("This Voicemeeter DLL cannot launch the application (VBVMR_RunVoicemeeter missing)")?;
-        let rc = unsafe { f(VOICEMEETER_TYPE_BANANA) };
+        let rc = unsafe { f(type_code) };
         if rc == 0 {
             Ok(())
         } else {
             Err(format!("VBVMR_RunVoicemeeter failed: {rc}"))
+        }
+    }
+
+    /// Which edition is running: 1 = Standard, 2 = Banana, 3 = Potato.
+    /// Fails with "no server" (-2) while Voicemeeter is not running, so callers
+    /// should retry on the next healthy tick rather than cache a failure.
+    pub fn get_voicemeeter_type(&self) -> Result<i32, String> {
+        self.require_login()?;
+        let f = self
+            .fn_get_voicemeeter_type
+            .ok_or("VBVMR_GetVoicemeeterType missing from this Voicemeeter DLL")?;
+        let mut vm_type: c_long = 0;
+        let rc = unsafe { f(&mut vm_type) };
+        if rc == 0 {
+            Ok(vm_type as i32)
+        } else {
+            Err(format!("VBVMR_GetVoicemeeterType failed: {rc}"))
         }
     }
 

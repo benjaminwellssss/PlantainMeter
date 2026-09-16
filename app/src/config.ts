@@ -27,15 +27,6 @@ export const DEFAULT_CHANNELS: ChannelConfig[] = [
 /** Kept for backwards compat — points to defaults */
 export const CHANNELS = DEFAULT_CHANNELS;
 
-/** Voicemeeter Banana strip names */
-export const STRIP_LABELS: Record<number, string> = {
-  0: "Hardware Input 1",
-  1: "Hardware Input 2",
-  2: "Hardware Input 3",
-  3: "Virtual Input 1",
-  4: "Virtual Input 2",
-};
-
 export const DEFAULT_A1_CHOICES: A1Device[] = [];
 
 export const DRIVER_OPTIONS = ["asio", "wdm", "ks", "mme"] as const;

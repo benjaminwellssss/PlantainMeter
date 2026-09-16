@@ -1,18 +1,33 @@
 import { useState } from "react";
 import type { ConnectionState } from "../hooks/useVoicemeeter";
+import type { LaunchEdition } from "../types/edition";
 
 interface ConnectionOverlayProps {
   connection: ConnectionState;
   error: string | null;
-  onLaunch: () => Promise<void>;
+  launchEdition: LaunchEdition;
+  onLaunchEditionChange: (next: LaunchEdition) => void;
+  onLaunch: (edition: LaunchEdition) => Promise<void>;
 }
+
+const LAUNCH_OPTIONS: { value: LaunchEdition; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "potato", label: "Potato" },
+  { value: "banana", label: "Banana" },
+];
 
 /**
  * Cold-start gate. Shown only before the first successful connection — once the
  * mixer has been live, a transient drop shows the titlebar indicator instead so a
  * device switch doesn't blank the whole window.
  */
-export default function ConnectionOverlay({ connection, error, onLaunch }: ConnectionOverlayProps) {
+export default function ConnectionOverlay({
+  connection,
+  error,
+  launchEdition,
+  onLaunchEditionChange,
+  onLaunch,
+}: ConnectionOverlayProps) {
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -20,7 +35,7 @@ export default function ConnectionOverlay({ connection, error, onLaunch }: Conne
     setLaunching(true);
     setLaunchError(null);
     try {
-      await onLaunch();
+      await onLaunch(launchEdition);
     } catch (e) {
       setLaunchError(String(e));
     } finally {
@@ -51,16 +66,33 @@ export default function ConnectionOverlay({ connection, error, onLaunch }: Conne
         {connection === "waiting" && (
           <>
             <p className="text-white/50 text-[clamp(0.5rem,1.5vw,0.7rem)] m-0">
-              Voicemeeter Banana isn't running yet.
+              Voicemeeter isn't running yet.
             </p>
-            <button
-              className="rounded-[4px] border-none px-[clamp(8px,2vw,14px)] py-[clamp(3px,0.7dvh,6px)] text-[clamp(0.55rem,1.8vw,0.75rem)] font-semibold cursor-pointer disabled:opacity-50"
-              style={{ backgroundColor: "var(--accent)", color: "var(--accent-fg)" }}
-              onClick={handleLaunch}
-              disabled={launching}
-            >
-              {launching ? "Launching…" : "Launch Voicemeeter"}
-            </button>
+            <div className="flex items-center gap-[clamp(3px,0.8vw,6px)]">
+              <button
+                className="rounded-[4px] border-none px-[clamp(8px,2vw,14px)] py-[clamp(3px,0.7dvh,6px)] text-[clamp(0.55rem,1.8vw,0.75rem)] font-semibold cursor-pointer disabled:opacity-50"
+                style={{ backgroundColor: "var(--accent)", color: "var(--accent-fg)" }}
+                onClick={handleLaunch}
+                disabled={launching}
+              >
+                {launching ? "Launching…" : "Launch Voicemeeter"}
+              </button>
+              {/* Which edition to start — mirrors the setting in Settings → Channels */}
+              <select
+                className="bg-white/10 border border-white/20 rounded-[3px] text-white/80 text-[clamp(0.5rem,1.5vw,0.65rem)] px-[clamp(2px,0.5vw,4px)] py-[2px] outline-none cursor-pointer"
+                style={{ colorScheme: "dark" }}
+                value={launchEdition}
+                onChange={(e) => onLaunchEditionChange(e.target.value as LaunchEdition)}
+                title="Which Voicemeeter edition to launch"
+                disabled={launching}
+              >
+                {LAUNCH_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </>
         )}
 

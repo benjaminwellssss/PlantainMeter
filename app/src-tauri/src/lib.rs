@@ -1,10 +1,11 @@
 mod accent;
 mod commands;
+mod edition;
 mod voicemeeter;
 
 use commands::{ShortcutMap, VmState};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::ShortcutState;
@@ -51,6 +52,7 @@ pub fn run() {
             api: Mutex::new(None),
             polling: Arc::new(AtomicBool::new(false)),
             connected: Arc::new(AtomicBool::new(false)),
+            edition: AtomicU8::new(0),
         })
         .manage(ShortcutMap {
             map: Mutex::new(HashMap::new()),
@@ -86,6 +88,8 @@ pub fn run() {
             commands::vm_get_a1_device,
             commands::vm_restart_engine,
             commands::vm_run_voicemeeter,
+            commands::vm_list_installed_editions,
+            commands::vm_get_edition,
             commands::vm_list_output_devices,
             commands::get_accent_color,
             commands::set_acrylic,
