@@ -86,14 +86,6 @@ impl VmEdition {
         }
     }
 
-    pub fn display_name(self) -> &'static str {
-        match self {
-            VmEdition::Standard => "Voicemeeter",
-            VmEdition::Banana => "Voicemeeter Banana",
-            VmEdition::Potato => "Voicemeeter Potato",
-        }
-    }
-
     pub fn hw_strip_count(self) -> u32 {
         match self {
             VmEdition::Standard => 2,
@@ -166,6 +158,7 @@ impl VmEdition {
         Some((base, base + 1))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn input_channel_count(self) -> i32 {
         (self.hw_strip_count() * 2 + self.virtual_strip_count() * 8) as i32
     }

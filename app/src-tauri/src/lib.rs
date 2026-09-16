@@ -1,4 +1,5 @@
 mod accent;
+mod app_sessions;
 mod commands;
 mod edition;
 mod fx;
@@ -6,6 +7,7 @@ mod hotkeys;
 mod voicemeeter;
 
 use commands::VmState;
+use app_sessions::AppSessionsHandle;
 use fx::FxState;
 use hotkeys::ShortcutMap;
 use std::sync::atomic::{AtomicBool, AtomicU8};
@@ -42,6 +44,7 @@ pub fn run() {
         })
         .manage(ShortcutMap::default())
         .manage(FxState::default())
+        .manage(AppSessionsHandle::default())
         .manage(WindowState {
             window: Mutex::new(None),
         })
@@ -83,6 +86,10 @@ pub fn run() {
             fx::vm_sync_fx_groups,
             fx::vm_toggle_fx_group,
             fx::vm_get_fx_state,
+            app_sessions::vm_list_app_sessions,
+            app_sessions::vm_set_app_volume,
+            app_sessions::vm_set_app_mute,
+            app_sessions::vm_set_app_polling,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

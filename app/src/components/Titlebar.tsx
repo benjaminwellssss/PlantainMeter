@@ -10,6 +10,8 @@ interface TitlebarProps {
   a1Choices: A1Device[];
   onA1Change: (index: number) => void;
   onSettingsClick: () => void;
+  onAppsClick: () => void;
+  appsOpen: boolean;
   busGain: number;
   showOutputLevel: boolean;
   /** Engine is temporarily unreachable (restarting after a device switch, etc.) */
@@ -26,7 +28,7 @@ function formatDb(v: number): string {
   return `${sign}${String(Math.abs(rounded)).padStart(2, "0")}dB`;
 }
 
-export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettingsClick, busGain, showOutputLevel, reconnecting, pinned, onPinToggle, windowPresets }: TitlebarProps) {
+export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettingsClick, onAppsClick, appsOpen, busGain, showOutputLevel, reconnecting, pinned, onPinToggle, windowPresets }: TitlebarProps) {
   const appWindow = getCurrentWindow();
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -130,6 +132,26 @@ export default function Titlebar({ selectedA1, a1Choices, onA1Change, onSettings
             d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.062 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
             clipRule="evenodd"
           />
+        </svg>
+      </button>
+
+      {/* Per-app mixer */}
+      <button
+        className="w-[clamp(16px,4vw,24px)] h-[clamp(16px,4dvh,24px)] flex items-center justify-center rounded-[3px] border-none cursor-pointer hover:bg-white/20 mr-[clamp(2px,0.5vw,6px)] shrink-0"
+        style={{
+          color: "var(--accent-fg)",
+          backgroundColor: appsOpen ? "rgba(255,255,255,0.28)" : "transparent",
+        }}
+        onClick={onAppsClick}
+        title={appsOpen ? "Hide per-app volumes" : "Per-app volumes"}
+        aria-pressed={appsOpen}
+      >
+        <svg
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className="w-[clamp(10px,2.5vw,14px)] h-[clamp(10px,2.5vw,14px)]"
+        >
+          <path d="M3 4a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm8 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V4zM3 12a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zm8 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
         </svg>
       </button>
 

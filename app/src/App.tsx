@@ -17,6 +17,7 @@ import BackgroundLayer from "./components/BackgroundLayer";
 import SettingsPanel from "./components/SettingsPanel";
 import ConnectionOverlay from "./components/ConnectionOverlay";
 import FxBar from "./components/FxBar";
+import AppMixerPanel from "./components/AppMixerPanel";
 
 export default function App() {
   const { style, saveStyle, loaded: styleLoaded } = useStyleSettings();
@@ -129,6 +130,7 @@ export default function App() {
   const reconnecting = everConnected && connection !== "connected";
   const [selectedA1, setSelectedA1] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [appsOpen, setAppsOpen] = useState(false);
 
   // Auto-detect A1 output device on first run
   const autoDetectRan = useRef(false);
@@ -191,7 +193,12 @@ export default function App() {
         selectedA1={selectedA1}
         a1Choices={outputs}
         onA1Change={setSelectedA1}
-        onSettingsClick={() => setSettingsOpen(true)}
+        onSettingsClick={() => {
+          setAppsOpen(false);
+          setSettingsOpen(true);
+        }}
+        onAppsClick={() => setAppsOpen((v) => !v)}
+        appsOpen={appsOpen}
         busGain={busGains.get(0) ?? 0}
         showOutputLevel={effectiveSettings.showOutputLevel}
         reconnecting={reconnecting}
@@ -235,6 +242,15 @@ export default function App() {
 
       {/* Bottom accent bar — grows to show FX pills while groups are active */}
       <FxBar groups={fxGroups} active={activeFx} onToggle={toggleFxGroup} />
+
+      {/* Per-app mixer slide-over */}
+      <AppMixerPanel
+        open={appsOpen}
+        onClose={() => setAppsOpen(false)}
+        channels={channelConfigs}
+        edition={edition}
+        connected={connected}
+      />
 
       {/* Settings panel */}
       <SettingsPanel
