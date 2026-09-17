@@ -29,9 +29,10 @@ interface FxTabProps {
 }
 
 /**
- * FX preset groups. Each group is a hotkey plus a list of parameter values;
- * the group's position in this list is the number shown on its pill (FX1,
- * FX2, ...), which is why reordering is offered.
+ * FX preset groups. Each group is a hotkey plus a list of parameter values,
+ * and shows on the bottom bar under its own name while active. The position
+ * in this list is the order the pills sit in, which is why reordering is
+ * offered.
  */
 export default function FxTab({ draft, onChange, edition, channels, saved, active, onToggle, connected }: FxTabProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -87,7 +88,7 @@ export default function FxTab({ draft, onChange, edition, channels, saved, activ
     <>
       <p className={`${smallText} text-white/50 m-0`}>
         A group applies its values when toggled on and restores the previous values when toggled off.
-        Active groups show as FX pills along the bottom of the window.
+        Active groups show as named pills along the bottom of the window.
       </p>
       {!edition.hasFx && (
         <p className={`${smallText} text-amber-300/70 m-0`}>
@@ -127,9 +128,9 @@ export default function FxTab({ draft, onChange, edition, channels, saved, activ
               <span
                 className={`${smallText} font-bold tabular-nums px-[clamp(3px,0.6vw,5px)] py-[1px] rounded-[3px] shrink-0`}
                 style={{ backgroundColor: "var(--accent)", color: "var(--accent-fg)" }}
-                title="Pill label"
+                title="Position — the order the pills sit in"
               >
-                FX{idx + 1}
+                {idx + 1}
               </span>
 
               <input

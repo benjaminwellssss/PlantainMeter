@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { migrateFxGroups, newGroup } from "../fxGroups";
+import { migrateFxGroups, newGroup, pillLabel } from "../fxGroups";
 
 describe("migrateFxGroups", () => {
   it("returns [] for anything that is not an array", () => {
@@ -53,5 +53,20 @@ describe("migrateFxGroups", () => {
     expect(a.id).not.toBe(b.id);
     expect(a.name).toBe("FX 1");
     expect(a.assignments).toEqual([]);
+  });
+});
+
+describe("pillLabel", () => {
+  it("shows the group's own name", () => {
+    expect(pillLabel("Cave", 1)).toBe("Cave");
+  });
+
+  it("falls back to the position when the name was cleared", () => {
+    expect(pillLabel("", 3)).toBe("FX 3");
+    expect(pillLabel("   ", 2)).toBe("FX 2");
+  });
+
+  it("trims a padded name rather than rendering the padding", () => {
+    expect(pillLabel("  Cave  ", 1)).toBe("Cave");
   });
 });

@@ -45,3 +45,11 @@ export function migrateFxGroups(raw: unknown): FxGroup[] {
   }
   return out;
 }
+
+/**
+ * Text for a group's pill on the FX bar: its own name, falling back to its
+ * position so a group whose name was cleared still shows something.
+ */
+export function pillLabel(name: string, position: number): string {
+  return name.trim() || `FX ${position}`;
+}
