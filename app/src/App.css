@@ -6,6 +6,9 @@
   --accent-r: 58;
   --accent-g: 134;
   --accent-b: 255;
+  --accent-glow-r: 58;
+  --accent-glow-g: 134;
+  --accent-glow-b: 255;
   --glass-opacity: 0.15;
 }
 
@@ -29,6 +32,29 @@ body {
 #root > div {
   background: rgba(30, 30, 30, var(--glass-opacity));
   transition: background 0.3s ease;
+}
+
+/* Breathing glow on the FX bar while any FX group is active. Kept in CSS so the
+   accent channels resolve live when the system accent changes. */
+@keyframes fx-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 5px 0 rgba(var(--accent-glow-r), var(--accent-glow-g), var(--accent-glow-b), 0.3);
+  }
+  50% {
+    box-shadow: 0 0 18px 4px rgba(var(--accent-glow-r), var(--accent-glow-g), var(--accent-glow-b), 0.85);
+  }
+}
+
+.fx-bar-glow {
+  animation: fx-breathe 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-bar-glow {
+    animation: none;
+    box-shadow: 0 0 10px 1px rgba(var(--accent-glow-r), var(--accent-glow-g), var(--accent-glow-b), 0.55);
+  }
 }
 
 /* Select dropdown styling */

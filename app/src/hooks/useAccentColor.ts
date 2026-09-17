@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AccentSource } from "../types/style";
+import { glowChannels } from "../lib/accent";
 
 interface AccentColor {
   r: number;
@@ -76,4 +77,11 @@ function applyToCSS(color: AccentColor) {
   root.style.setProperty("--accent-r", String(color.r));
   root.style.setProperty("--accent-g", String(color.g));
   root.style.setProperty("--accent-b", String(color.b));
+
+  // A near-black accent would glow invisibly, so the FX bar gets its own
+  // lifted channels rather than reusing --accent-r/g/b directly.
+  const [gr, gg, gb] = glowChannels(color.r, color.g, color.b);
+  root.style.setProperty("--accent-glow-r", String(gr));
+  root.style.setProperty("--accent-glow-g", String(gg));
+  root.style.setProperty("--accent-glow-b", String(gb));
 }

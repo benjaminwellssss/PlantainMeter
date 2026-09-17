@@ -26,7 +26,9 @@ export default function FxBar({ groups, active, onToggle }: FxBarProps) {
 
   return (
     <motion.div
-      className="shrink-0 flex items-center justify-center overflow-x-auto [scrollbar-width:none] gap-[clamp(4px,1.5vw,8px)] px-[clamp(6px,2vw,12px)]"
+      className={`shrink-0 flex items-center justify-center overflow-x-auto [scrollbar-width:none] gap-[clamp(4px,1.5vw,8px)] px-[clamp(6px,2vw,12px)] ${
+        expanded ? "fx-bar-glow" : ""
+      }`}
       style={{ backgroundColor: "var(--accent)" }}
       initial={false}
       animate={{ height: expanded ? "clamp(14px, 4dvh, 18px)" : "clamp(2px, 0.5dvh, 4px)" }}
