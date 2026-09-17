@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { ChannelConfig } from "../config";
 import type { EditionInfo } from "../types/edition";
 import { useAppSessions } from "../hooks/useAppSessions";
-import { useHiddenApps, hideKey } from "../hooks/useHiddenApps";
+import { useHiddenApps } from "../hooks/useHiddenApps";
+import { hideKey, buildScopes } from "../lib/hiddenApps";
 import AppSessionRow from "./AppSessionRow";
 
 interface AppMixerPanelProps {
@@ -22,7 +23,7 @@ interface AppMixerPanelProps {
 export default function AppMixerPanel({ open, onClose, channels, edition, connected }: AppMixerPanelProps) {
   const { endpoints, levels, error, loaded, setVolume, setMute, startDragging, stopDragging } =
     useAppSessions(open && connected);
-  const { isHidden, hide, unhide } = useHiddenApps();
+  const { isHidden, hide, unhide, migrate, loaded: hiddenLoaded } = useHiddenApps();
   const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => {
@@ -34,12 +35,27 @@ export default function AppMixerPanel({ open, onClose, channels, edition, connec
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
+  // Hide scopes come from every endpoint, not just the routed ones, so a
+  // hardware input's number doesn't shift when the edition changes.
+  const scopes = buildScopes(endpoints);
+  const scopeOf = (ep: { endpoint: string }) => scopes.get(ep.endpoint) ?? ep.endpoint;
+
   // Endpoints the running edition actually routes somewhere; empty ones stay
   // listed so the user can see the input exists.
   const visible = endpoints.filter((e) => e.strip !== null);
-  const allSessions = visible.flatMap((e) => e.sessions);
-  const hiddenCount = allSessions.filter((s) => isHidden(hideKey(s))).length;
-  const shownCount = allSessions.length - hiddenCount;
+
+  // Hides are scoped per endpoint, so an app playing into two inputs is two
+  // separate entries — count the pairs, not the sessions.
+  const keys = visible.flatMap((e) => e.sessions.map((s) => hideKey(scopeOf(e), s)));
+  const hiddenCount = keys.filter((k) => isHidden(k)).length;
+  const shownCount = keys.length - hiddenCount;
+
+  // One-shot upgrade of entries saved when hiding was global.
+  const scopeList = [...scopes.values()].join(",");
+  useEffect(() => {
+    if (!hiddenLoaded || !scopeList) return;
+    migrate(scopeList.split(","));
+  }, [hiddenLoaded, scopeList, migrate]);
 
   const groupLabel = (strip: number, fallback: string) =>
     channels.find((c) => c.strip === strip)?.label ?? edition.strips[strip]?.label ?? fallback;
@@ -99,17 +115,18 @@ export default function AppMixerPanel({ open, onClose, channels, edition, connec
                   No Voicemeeter input devices found. Are the Voicemeeter virtual audio drivers installed?
                 </p>
               )}
-              {connected && !error && loaded && visible.length > 0 && allSessions.length === 0 && (
+              {connected && !error && loaded && visible.length > 0 && keys.length === 0 && (
                 <p className={`${smallText} text-white/50 m-0`}>
                   No apps are playing into Voicemeeter right now. Start something that outputs to a Voicemeeter input.
                 </p>
               )}
-              {connected && !error && loaded && allSessions.length > 0 && shownCount === 0 && !showHidden && (
+              {connected && !error && loaded && keys.length > 0 && shownCount === 0 && !showHidden && (
                 <p className={`${smallText} text-white/50 m-0`}>Every app here is hidden. Use “{hiddenCount} hidden” above to show them.</p>
               )}
 
               {visible.map((ep) => {
-                const rows = ep.sessions.filter((s) => showHidden || !isHidden(hideKey(s)));
+                const scope = scopeOf(ep);
+                const rows = ep.sessions.filter((s) => showHidden || !isHidden(hideKey(scope, s)));
                 if (ep.sessions.length > 0 && rows.length === 0) return null;
                 return (
                   <section key={ep.endpoint} className="flex flex-col gap-[clamp(3px,0.8dvh,5px)]">
@@ -119,7 +136,7 @@ export default function AppMixerPanel({ open, onClose, channels, edition, connec
                       {ep.sessions.length === 0 && <span className="text-white/30 truncate">— nothing playing</span>}
                     </header>
                     {rows.map((s) => {
-                      const key = hideKey(s);
+                      const key = hideKey(scope, s);
                       const hidden = isHidden(key);
                       return (
                         <AppSessionRow

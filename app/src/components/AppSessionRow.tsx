@@ -96,7 +96,7 @@ export default function AppSessionRow({
       <button
         className="flex items-center justify-center rounded-[3px] border-none bg-transparent cursor-pointer text-white/35 hover:text-white/80 hover:bg-white/10 w-[clamp(14px,3.5vw,20px)] h-[clamp(14px,3.5vw,20px)] shrink-0"
         onClick={onToggleHidden}
-        title={hidden ? "Show this app again" : "Hide this app from the list"}
+        title={hidden ? "Show this app under this input again" : "Hide this app under this input"}
         aria-pressed={hidden}
       >
         {hidden ? (

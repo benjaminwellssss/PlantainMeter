@@ -1,20 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import type { AppSession } from "../types/appSessions";
+import { migrateHidden } from "../lib/hiddenApps";
 import { readKey, writeKey } from "../lib/settingsStore";
 
 const HIDDEN_APPS_KEY = "hiddenApps";
 
-/** Identity used for hiding: the executable name, or the display name for pid-less sessions. */
-export function hideKey(session: Pick<AppSession, "process" | "display">): string {
-  return (session.process || session.display).trim().toLowerCase();
-}
-
 /**
- * Apps the user has hidden from the per-app mixer, persisted by executable
- * name so they stay hidden across restarts and new sessions.
+ * Apps the user has hidden from the per-app mixer, persisted as
+ * `"<endpoint kind>:<executable name>"` so a hide applies only to the input it
+ * was made under and survives restarts and new sessions.
  */
 export function useHiddenApps() {
   const [hidden, setHidden] = useState<string[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,6 +19,7 @@ export function useHiddenApps() {
       if (cancelled) return;
       const list = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
       setHidden(list.map((s) => s.toLowerCase()));
+      setLoaded(true);
     });
     return () => { cancelled = true; };
   }, []);
@@ -51,5 +49,19 @@ export function useHiddenApps() {
 
   const isHidden = useCallback((key: string) => hidden.includes(key), [hidden]);
 
-  return { hidden, isHidden, hide, unhide, save };
+  /**
+   * Rewrite entries saved before hiding was per-channel into one entry per
+   * endpoint, so what was hidden before stays hidden everywhere it showed.
+   * Safe to call repeatedly — it only writes when something changes.
+   */
+  const migrate = useCallback((scopes: string[]) => {
+    setHidden((prev) => {
+      const next = migrateHidden(prev, scopes);
+      if (next === prev) return prev;
+      writeKey(HIDDEN_APPS_KEY, next);
+      return next;
+    });
+  }, []);
+
+  return { hidden, loaded, isHidden, hide, unhide, save, migrate };
 }
