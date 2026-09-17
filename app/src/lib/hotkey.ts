@@ -102,6 +102,18 @@ export function keyEventToAccelerator(e: KeyLike): string | null {
   return buildHotkey(mods, key);
 }
 
+/**
+ * Accelerator for a freshly recorded key press, honoring modifiers the user
+ * toggled on before recording. Those are merged with the modifiers actually
+ * held down, so pre-picking Ctrl and then tapping M yields Ctrl+M.
+ */
+export function recordHotkey(e: KeyLike, pending: ModName[]): string | null {
+  const accel = keyEventToAccelerator(e);
+  if (!accel) return null;
+  const { mods, key } = parseHotkey(accel);
+  return buildHotkey([...pending, ...mods], key);
+}
+
 /** Human-readable form of a full accelerator, e.g. "Ctrl+Shift+Num 1". */
 export function formatHotkey(accel: string): string {
   const { mods, key } = parseHotkey(accel);

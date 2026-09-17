@@ -3,6 +3,7 @@ import {
   parseHotkey,
   buildHotkey,
   keyEventToAccelerator,
+  recordHotkey,
   formatKeyLabel,
   formatHotkey,
   type KeyLike,
@@ -56,6 +57,28 @@ describe("keyEventToAccelerator", () => {
   it("maps arrows and space", () => {
     expect(keyEventToAccelerator(ev({ key: "ArrowUp", code: "ArrowUp" }))).toBe("Up");
     expect(keyEventToAccelerator(ev({ key: " ", code: "Space", altKey: true }))).toBe("Alt+Space");
+  });
+});
+
+describe("recordHotkey", () => {
+  it("applies modifiers picked before recording to a bare key press", () => {
+    expect(recordHotkey(ev({ key: "m", code: "KeyM" }), ["CmdOrCtrl", "Shift"])).toBe("CmdOrCtrl+Shift+M");
+  });
+
+  it("merges pre-picked modifiers with the ones held during recording", () => {
+    expect(recordHotkey(ev({ key: "m", code: "KeyM", altKey: true }), ["CmdOrCtrl"])).toBe("CmdOrCtrl+Alt+M");
+  });
+
+  it("does not duplicate a modifier that was both picked and held", () => {
+    expect(recordHotkey(ev({ key: "F5", code: "F5", shiftKey: true }), ["Shift"])).toBe("Shift+F5");
+  });
+
+  it("behaves like keyEventToAccelerator when nothing was pre-picked", () => {
+    expect(recordHotkey(ev({ key: "F5", code: "F5" }), [])).toBe("F5");
+  });
+
+  it("still ignores lone modifier presses", () => {
+    expect(recordHotkey(ev({ key: "Alt", code: "AltLeft", altKey: true }), ["Shift"])).toBeNull();
   });
 });
 
