@@ -16,11 +16,28 @@ jobs:
       - name: Strip private files
         run: |
           cd /workspace
-          git rm -rf --cached .vscode/ .tmp/ .gitea/ CLAUDE.md 2>/dev/null || true
+          # The runner container has no git identity; without one the commit
+          # below fails and the push step never runs.
+          git config user.name "MiniMeeter Mirror"
+          git config user.email "mirror@git.onebynine.ai"
+          git rm -rf --cached --ignore-unmatch .vscode/ .tmp/ .gitea/ CLAUDE.md docs/superpowers/
           git commit -m "mirror: strip private files" --allow-empty
 
       - name: Push to GitHub
         run: |
           cd /workspace
           git remote add github https://x-access-token:${{ secrets.GH_MIRROR_TOKEN }}@github.com/shuperj/MiniMeeter.git
-          git push github main --force
+          git fetch github main
+          STRIPPED=$(git rev-parse HEAD)
+          TIP=$(git rev-parse FETCH_HEAD)
+          if [ "$(git rev-parse "$TIP^{tree}")" = "$(git rev-parse "$STRIPPED^{tree}")" ]; then
+            echo "GitHub main already has this tree; nothing to push."
+            exit 0
+          fi
+          # Never force-push the public branch. GitHub's tip carries mirror-only
+          # commits Gitea does not have, so join the two: the stripped tree, with
+          # the current GitHub tip as a parent, which lands as a fast-forward.
+          MERGED=$(git commit-tree "$STRIPPED^{tree}" -p "$STRIPPED" -p "$TIP" \
+            -m "mirror: sync ${{ gitea.sha }}" \
+            -m "Keeps the mirrored tree (private files stripped) while retaining the previous GitHub tip as a parent, so this lands as a fast-forward.")
+          git push github "$MERGED:refs/heads/main"
