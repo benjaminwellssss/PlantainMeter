@@ -1,6 +1,6 @@
 # MiniMeeter
 
-A lightweight, easily resizeable audio mixer for [Voicemeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm) on Windows. Designed to be small enough to sit alongside Plexamp or Spotify, but powerful enough to replace the full Voicemeeter UI for day-to-day mixing.
+A lightweight, easily resizeable audio mixer for [Voicemeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm) and [Voicemeeter Potato](https://vb-audio.com/Voicemeeter/potato.htm) on Windows. Designed to be small enough to sit alongside Plexamp or Spotify, but powerful enough to replace the full Voicemeeter UI for day-to-day mixing.
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
@@ -15,12 +15,15 @@ A lightweight, easily resizeable audio mixer for [Voicemeeter Banana](https://vb
 - **Background visualizers** - 7 animated backgrounds (plasma, starfield, matrix rain, and more)
 - **Per-focus styling** - Different backgrounds/opacity when the window is focused vs unfocused
 - **A1 output switching** - Change your main output device from the title bar
+- **Banana and Potato** - Detects which edition is running and offers all of its strips (8 on Potato); choose which edition the Launch button starts
+- **Per-app volumes** - A slide-over from the title bar lists every app playing into Voicemeeter's virtual inputs with its own volume, mute and live meter
+- **FX preset hotkeys** (Potato) - Bundle reverb/delay/FX sends, master FX switches and bus returns into named groups, toggle them with global hotkeys, and see active groups as FX pills along the bottom bar
 - **Fully configurable** - Remap strips, rename channels, adjust dB ranges from the settings panel
 
 ## Requirements
 
 - Windows 10/11
-- [Voicemeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm) installed
+- [Voicemeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm) or [Voicemeeter Potato](https://vb-audio.com/Voicemeeter/potato.htm) installed (FX groups need Potato)
 
 ## Download
 
@@ -37,6 +40,8 @@ npx tauri build
 ```
 
 The compiled binary lands in `app/src-tauri/target/release/minimeeter.exe`.
+
+Tests: `npm test` (frontend helpers, vitest) and `cargo test` in `app/src-tauri` (edition tables, FX engine, hotkey bindings, audio-session helpers).
 
 ## Support
 
