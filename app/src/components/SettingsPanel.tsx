@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable as autostartEnable, disable as autostartDisable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ChannelConfig, A1Device } from "../config";
-import { STRIP_LABELS } from "../config";
+import type { ChannelConfig, A1Device, VoicemeeterEdition } from "../config";
+import { availableStripsFor, stripLabelsFor } from "../config";
 import type { StyleSettings } from "../types/style";
 import { DEFAULT_STYLE_SETTINGS } from "../types/style";
 import StyleTab from "./settings/StyleTab";
@@ -14,6 +14,10 @@ interface SettingsPanelProps {
   outputs: A1Device[];
   meterDecay: number;
   styleSettings: StyleSettings;
+  /** Running Voicemeeter edition — governs which strips are offered (Banana
+      has fewer than Potato). `null` before the first connect falls back to
+      Potato's layout, same as everywhere else. */
+  edition: VoicemeeterEdition | null;
   onSaveChannels: (channels: ChannelConfig[]) => void;
   onSaveOutputs: (outputs: A1Device[]) => void;
   onSaveMeterDecay: (decay: number) => void;
@@ -23,8 +27,6 @@ interface SettingsPanelProps {
 }
 
 type Tab = "channels" | "outputs" | "style";
-
-const AVAILABLE_STRIPS = [0, 1, 2, 3, 4];
 
 /** Stable identity for an output device across driver + name. */
 const deviceKey = (d: { driver: string; name: string }) => `${d.driver}|${d.name}`;
@@ -132,6 +134,7 @@ export default function SettingsPanel({
   outputs,
   meterDecay,
   styleSettings,
+  edition,
   onSaveChannels,
   onSaveOutputs,
   onSaveMeterDecay,
@@ -139,6 +142,8 @@ export default function SettingsPanel({
   onPreviewStyle,
   onClose,
 }: SettingsPanelProps) {
+  const AVAILABLE_STRIPS = availableStripsFor(edition ?? "potato");
+  const STRIP_LABELS = stripLabelsFor(edition ?? "potato");
   const [tab, setTab] = useState<Tab>("style");
   const [chDraft, setChDraft] = useState<ChannelConfig[]>([]);
   const [outDraft, setOutDraft] = useState<A1Device[]>([]);

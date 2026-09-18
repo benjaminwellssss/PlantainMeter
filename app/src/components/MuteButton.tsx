@@ -5,15 +5,7 @@ interface MuteButtonProps {
   onToggle: () => void;
 }
 
-/** Same button design as Mono/Solo/MC/Karaoke, just kept at the larger "large" size. */
+/** Same button design as Mono/Solo/MC/Karaoke — identical size and shading. */
 export default function MuteButton({ muted, onToggle }: MuteButtonProps) {
-  return (
-    <StripButton
-      label={muted ? "Muted" : "Mute"}
-      active={muted}
-      activeColor="rgba(239,68,68,0.55)"
-      onClick={onToggle}
-      size="large"
-    />
-  );
+  return <StripButton label={muted ? "Muted" : "Mute"} active={muted} onClick={onToggle} />;
 }

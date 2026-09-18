@@ -5,13 +5,19 @@ import { LogicalSize } from "@tauri-apps/api/dpi";
 import type { A1Device } from "./config";
 import {
   modeKindFor,
-  FADER_MIN_HEIGHT,
-  KNOB_MIN_HEIGHT,
-  FADER_COLUMN_MIN_WIDTH,
-  KNOB_COLUMN_MIN_WIDTH,
-  ROW_PADDING_MIN,
-  ROW_GAP_MIN,
+  defaultChannelsFor,
+  FADER_UNIT_MIN,
+  FADER_UNIT_MAX,
+  KNOB_UNIT_MIN,
+  KNOB_UNIT_MAX,
+  FADER_CONTENT_MIN_HEIGHT,
+  KNOB_CONTENT_MIN_HEIGHT,
+  FX_BOX_MIN_HEIGHT,
+  TITLEBAR_HEIGHT,
+  SPACING_BAR_HEIGHT,
+  BOTTOM_BAR_HEIGHT,
   WINDOW_MIN_WIDTH,
+  VERTICAL_MARGIN_RATIO,
 } from "./config";
 import { useVoicemeeter } from "./hooks/useVoicemeeter";
 import { useAccentColor } from "./hooks/useAccentColor";
@@ -19,10 +25,13 @@ import { useChannelConfig } from "./hooks/useChannelConfig";
 import { useStyleSettings } from "./hooks/useStyleSettings";
 import { useWindowFocus } from "./hooks/useWindowFocus";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useControlUnit, minWidthForUnit } from "./hooks/useControlUnit";
+import SpacingSliders from "./components/SpacingSliders";
 import type { StyleSettings } from "./types/style";
 import Titlebar from "./components/Titlebar";
 import Fader from "./components/Fader";
 import Knob from "./components/Knob";
+import FxBox from "./components/FxBox";
 import BackgroundLayer from "./components/BackgroundLayer";
 import SettingsPanel from "./components/SettingsPanel";
 import ConnectionOverlay from "./components/ConnectionOverlay";
@@ -128,21 +137,73 @@ export default function App() {
     invoke("set_window_opacity", { opacity: effectiveSettings.globalOpacity ?? 1 }).catch(() => {});
   }, [effectiveSettings.globalOpacity, styleLoaded]);
 
-  const { channels: channelConfigs, saveChannels, outputs, saveOutputs, meterDecay, saveMeterDecay, loaded, needsOutputSetup, setNeedsOutputSetup } = useChannelConfig();
+  const { channels: channelConfigs, saveChannels, outputs, saveOutputs, meterDecay, saveMeterDecay, loaded, needsOutputSetup, setNeedsOutputSetup, needsChannelSetup, setNeedsChannelSetup } = useChannelConfig();
 
-  // Smallest usable window size for the current control mode — width scales
-  // with the channel count so shrinking never squeezes a column narrower
-  // than its control's own minimum (a knob must never get smooshed).
+  const {
+    connection,
+    connected,
+    everConnected,
+    error,
+    edition,
+    channels,
+    levels,
+    busGains,
+    setGain,
+    setMute,
+    setMono,
+    setSolo,
+    setMc,
+    setKaraoke,
+    setReverbSend,
+    setDelaySend,
+    startDragging,
+    stopDragging,
+    launchVoicemeeter,
+  } = useVoicemeeter(channelConfigs);
+
+  // Extra per-channel height for FxBox (Reverb/Delay macros) — only Banana
+  // and Potato have an FX section at all. Defaults to "has it" before the
+  // edition is known, same as the rest of the app falling back to Potato's
+  // (the superset) layout.
+  const hasFxSection = (edition ?? "potato") !== "standard";
+
+  const isKnobMode = style.controlMode === "knob";
+  const unitMin = isKnobMode ? KNOB_UNIT_MIN : FADER_UNIT_MIN;
+  const unitMax = isKnobMode ? KNOB_UNIT_MAX : FADER_UNIT_MAX;
+  const contentMinHeight = isKnobMode ? KNOB_CONTENT_MIN_HEIGHT : FADER_CONTENT_MIN_HEIGHT;
+  const gapMultiplier = style.gapMultiplier;
+  const marginMultiplier = style.marginMultiplier;
+
+  const setGapMultiplier = (v: number) => saveStyle({ ...style, gapMultiplier: v });
+  const setMarginMultiplier = (v: number) => saveStyle({ ...style, marginMultiplier: v });
+
+  const rowRef = useRef<HTMLDivElement>(null);
+  const channelCount = channelConfigs.length;
+  // The one shared sizing unit for the whole row — see useControlUnit for the
+  // math. Margins and gaps below are `marginMultiplier` and `gapMultiplier`
+  // units of this (adjustable via the titlebar sliders), so they scale
+  // proportionally with the controls instead of drifting.
+  const unit = useControlUnit(rowRef, channelCount, unitMin, unitMax, gapMultiplier, marginMultiplier);
+
+  // Smallest usable window size for the current control mode. Width is the
+  // exact point where N controls + their gaps + margins on both sides fit at
+  // the unit's own minimum (see useControlUnit's math); height adds a margin
+  // top and bottom to the natural content height, so "ample, even,
+  // proportional clear space" holds even at the floor.
   const minWindowSize = useMemo(() => {
-    const count = Math.max(channelConfigs.length, 1);
-    const columnWidth = style.controlMode === "knob" ? KNOB_COLUMN_MIN_WIDTH : FADER_COLUMN_MIN_WIDTH;
-    const height = style.controlMode === "knob" ? KNOB_MIN_HEIGHT : FADER_MIN_HEIGHT;
     const width = Math.max(
       WINDOW_MIN_WIDTH,
-      count * columnWidth + (count - 1) * ROW_GAP_MIN + ROW_PADDING_MIN * 2,
+      minWidthForUnit(channelCount, unitMin, gapMultiplier, marginMultiplier),
     );
-    return { width, height };
-  }, [style.controlMode, channelConfigs.length]);
+    const height =
+      TITLEBAR_HEIGHT +
+      SPACING_BAR_HEIGHT +
+      unitMin * 2 * marginMultiplier * VERTICAL_MARGIN_RATIO +
+      contentMinHeight +
+      (hasFxSection ? FX_BOX_MIN_HEIGHT + unitMin * gapMultiplier * VERTICAL_MARGIN_RATIO : 0) +
+      BOTTOM_BAR_HEIGHT;
+    return { width: Math.round(width), height: Math.round(height) };
+  }, [channelCount, unitMin, contentMinHeight, gapMultiplier, marginMultiplier, hasFxSection]);
 
   // Keeps the OS-enforced minimum window size in sync, so a manual resize
   // (not just the shrink-to-fit button) can't go smaller than this either.
@@ -177,24 +238,15 @@ export default function App() {
     getCurrentWindow().setSize(new LogicalSize(minWindowSize.width, minWindowSize.height)).catch(() => {});
   };
 
-  const {
-    connection,
-    connected,
-    everConnected,
-    error,
-    channels,
-    levels,
-    busGains,
-    setGain,
-    setMute,
-    setMono,
-    setSolo,
-    setMc,
-    setKaraoke,
-    startDragging,
-    stopDragging,
-    launchVoicemeeter,
-  } = useVoicemeeter(channelConfigs);
+  // First run for this edition: no saved channel config yet, so seed one
+  // that actually matches the running edition's strip layout (Banana's
+  // virtual strips start at 3, Potato's at 5) instead of always assuming
+  // Potato. Only fires once — `needsChannelSetup` flips off after saving.
+  useEffect(() => {
+    if (!connected || !edition || !needsChannelSetup) return;
+    saveChannels(defaultChannelsFor(edition));
+    setNeedsChannelSetup(false);
+  }, [connected, edition, needsChannelSetup, saveChannels, setNeedsChannelSetup]);
 
   // A drop after we've been live (engine restart, device switch) is transient —
   // show it in the titlebar rather than blanking the window.
@@ -236,10 +288,12 @@ export default function App() {
     return Math.min(shaped, 1);
   }, [levels]);
 
-  // Fader width CSS var
-  const faderWidth = effectiveSettings.faderColumnWidth;
-  const faderContainerStyle = faderWidth > 0
-    ? { "--fader-max-w": `${faderWidth}px` } as React.CSSProperties
+  // Manual fader-width override (Settings > Style) — takes priority over the
+  // auto-computed unit for the control's own rendered width, but margins and
+  // gaps keep following the unit either way.
+  const faderWidthOverride = effectiveSettings.faderColumnWidth;
+  const faderContainerStyle = faderWidthOverride > 0
+    ? { "--fader-max-w": `${faderWidthOverride}px` } as React.CSSProperties
     : undefined;
 
   return (
@@ -278,10 +332,41 @@ export default function App() {
         windowPresets={effectiveSettings.windowPresets ?? []}
       />
 
-      {/* Channel faders */}
+      {/* Gap / clear-space sliders — top-middle, drive the same multipliers
+          useControlUnit uses, so dragging them live-adjusts the proportional
+          system rather than fighting it. */}
+      <SpacingSliders
+        gapMultiplier={gapMultiplier}
+        marginMultiplier={marginMultiplier}
+        onGapChange={setGapMultiplier}
+        onMarginChange={setMarginMultiplier}
+      />
+
+      {/* Channel faders — margins and gap are both driven by `unit` (see
+          useControlUnit), so clear space scales proportionally with the
+          controls themselves instead of being tuned by hand. The vertical
+          margin is scaled down from the horizontal one (VERTICAL_MARGIN_RATIO)
+          — a single control's height has nothing to do with the combined
+          width of a whole row, so using the same absolute value for both
+          read as a huge empty band top and bottom. justify-center means any
+          leftover space (once `unit` hits its max, e.g. very few channels in
+          a wide window) is split evenly on both sides instead of piling up
+          on the right — resizing either edge keeps the group centered.
+          overflow-x-auto + a real scrollbar (channel-row, in App.css) is a
+          hard backstop: even if the math above were ever wrong, content
+          becomes reachable by scrolling instead of hidden behind the window
+          edge. */}
       <div
-        className="flex-1 flex items-stretch overflow-x-auto px-[clamp(16px,2.8vw,24px)] pt-[clamp(14px,2.2dvh,20px)] pb-[clamp(14px,2dvh,18px)] gap-[clamp(8px,2vw,20px)] min-h-0"
-        style={faderContainerStyle}
+        ref={rowRef}
+        className="channel-row flex-1 flex items-stretch justify-center overflow-x-auto min-h-0"
+        style={{
+          ...faderContainerStyle,
+          paddingLeft: unit * marginMultiplier,
+          paddingRight: unit * marginMultiplier,
+          paddingTop: unit * marginMultiplier * VERTICAL_MARGIN_RATIO,
+          paddingBottom: unit * marginMultiplier * VERTICAL_MARGIN_RATIO,
+          gap: unit * gapMultiplier,
+        }}
       >
         {loaded &&
           channelConfigs.map((ch) => {
@@ -292,33 +377,44 @@ export default function App() {
               mc: false,
               solo: false,
               karaoke: 0,
+              reverbSend: null,
+              delaySend: null,
             };
             const Control = style.controlMode === "knob" ? Knob : Fader;
             return (
-              <Control
-                key={ch.strip}
-                label={ch.label}
-                value={state.gain}
-                min={ch.minDb}
-                max={ch.maxDb}
-                muted={state.muted}
-                mono={state.mono}
-                solo={state.solo}
-                mc={state.mc}
-                karaoke={state.karaoke}
-                modeKind={modeKindFor(ch.strip)}
-                level={levels.get(ch.strip) ?? 0}
-                levelScale={ch.levelScale ?? 1}
-                meterDecay={meterDecay}
-                onChange={(v) => setGain(ch.strip, v)}
-                onMuteToggle={(m) => setMute(ch.strip, m)}
-                onMonoToggle={(v) => setMono(ch.strip, v)}
-                onSoloToggle={(v) => setSolo(ch.strip, v)}
-                onMcToggle={(v) => setMc(ch.strip, v)}
-                onKaraokeChange={(v) => setKaraoke(ch.strip, v)}
-                onDragStart={() => startDragging(ch.strip)}
-                onDragEnd={() => stopDragging(ch.strip)}
-              />
+              <div key={ch.strip} className="flex flex-col items-center justify-center shrink-0" style={{ gap: unit * gapMultiplier * VERTICAL_MARGIN_RATIO }}>
+                <Control
+                  label={ch.label}
+                  value={state.gain}
+                  min={ch.minDb}
+                  max={ch.maxDb}
+                  unit={unit}
+                  muted={state.muted}
+                  mono={state.mono}
+                  solo={state.solo}
+                  mc={state.mc}
+                  karaoke={state.karaoke}
+                  modeKind={modeKindFor(ch.strip, edition ?? "potato")}
+                  level={levels.get(ch.strip) ?? 0}
+                  levelScale={ch.levelScale ?? 1}
+                  meterDecay={meterDecay}
+                  onChange={(v) => setGain(ch.strip, v)}
+                  onMuteToggle={(m) => setMute(ch.strip, m)}
+                  onMonoToggle={(v) => setMono(ch.strip, v)}
+                  onSoloToggle={(v) => setSolo(ch.strip, v)}
+                  onMcToggle={(v) => setMc(ch.strip, v)}
+                  onKaraokeChange={(v) => setKaraoke(ch.strip, v)}
+                  onDragStart={() => startDragging(ch.strip)}
+                  onDragEnd={() => stopDragging(ch.strip)}
+                />
+                <FxBox
+                  unit={unit}
+                  reverbSend={state.reverbSend}
+                  delaySend={state.delaySend}
+                  onReverbSendChange={(v) => setReverbSend(ch.strip, v)}
+                  onDelaySendChange={(v) => setDelaySend(ch.strip, v)}
+                />
+              </div>
             );
           })}
       </div>
@@ -336,6 +432,7 @@ export default function App() {
         outputs={outputs}
         meterDecay={meterDecay}
         styleSettings={style}
+        edition={edition}
         onSaveChannels={saveChannels}
         onSaveOutputs={saveOutputs}
         onSaveMeterDecay={saveMeterDecay}

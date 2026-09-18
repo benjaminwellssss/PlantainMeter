@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ChannelConfig } from "../config";
+import type { ChannelConfig, VoicemeeterEdition } from "../config";
 
-interface StripState {
+/** Raw shape emitted by the Rust side (snake_case Serde fields). */
+interface RawStripState {
   strip: number;
   gain: number;
   muted: boolean;
@@ -11,10 +12,12 @@ interface StripState {
   mc: boolean;
   solo: boolean;
   karaoke: number;
+  reverb_send: number | null;
+  delay_send: number | null;
 }
 
 interface AllStripsState {
-  strips: StripState[];
+  strips: RawStripState[];
 }
 
 interface StripLevel {
@@ -56,7 +59,20 @@ export interface ChannelState {
   mc: boolean;
   solo: boolean;
   karaoke: number;
+  /** Reverb/Delay send — `null` when this edition has no FX section. */
+  reverbSend: number | null;
+  delaySend: number | null;
 }
+
+const EMPTY_CHANNEL_STATE: Omit<ChannelState, "gain"> = {
+  muted: false,
+  mono: false,
+  mc: false,
+  solo: false,
+  karaoke: 0,
+  reverbSend: null,
+  delaySend: null,
+};
 
 /** How long to wait before retrying after a hard login failure. */
 const ERROR_RETRY_MS = 3000;
@@ -71,10 +87,12 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const [channels, setChannels] = useState<Map<number, ChannelState>>(() => {
     const map = new Map<number, ChannelState>();
     for (const ch of channelConfigs) {
-      map.set(ch.strip, { gain: ch.defaultDb, muted: false, mono: false, mc: false, solo: false, karaoke: 0 });
+      map.set(ch.strip, { gain: ch.defaultDb, ...EMPTY_CHANNEL_STATE });
     }
     return map;
   });
+
+  const [edition, setEdition] = useState<VoicemeeterEdition | null>(null);
 
   const [levels, setLevels] = useState<Map<number, number>>(() => {
     const map = new Map<number, number>();
@@ -90,13 +108,22 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   // Track which strips are being actively dragged to avoid overwriting
   const dragging = useRef<Set<number>>(new Set());
 
-  const applyStrips = useCallback((strips: StripState[]) => {
+  const applyStrips = useCallback((strips: RawStripState[]) => {
     setChannels((prev) => {
       const next = new Map(prev);
       for (const s of strips) {
         // Don't overwrite a strip the user is currently dragging
         if (!dragging.current.has(s.strip)) {
-          next.set(s.strip, { gain: s.gain, muted: s.muted, mono: s.mono, mc: s.mc, solo: s.solo, karaoke: s.karaoke });
+          next.set(s.strip, {
+            gain: s.gain,
+            muted: s.muted,
+            mono: s.mono,
+            mc: s.mc,
+            solo: s.solo,
+            karaoke: s.karaoke,
+            reverbSend: s.reverb_send,
+            delaySend: s.delay_send,
+          });
         }
       }
       return next;
@@ -125,6 +152,9 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
           const state = await invoke<AllStripsState>("vm_get_all_strips");
           if (cancelled) return;
           applyStrips(state.strips);
+          invoke<VoicemeeterEdition | null>("vm_get_edition")
+            .then((ed) => { if (!cancelled) setEdition(ed); })
+            .catch(() => {});
         } else {
           // Not a failure: Voicemeeter isn't up yet. The Rust poller stays alive
           // and will emit `vm:connection` the moment the engine appears, so there
@@ -150,6 +180,9 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
         // (an engine restart re-reads Voicemeeter's own config).
         invoke<AllStripsState>("vm_get_all_strips")
           .then((state) => { if (!cancelled) applyStrips(state.strips); })
+          .catch(() => {});
+        invoke<VoicemeeterEdition | null>("vm_get_edition")
+          .then((ed) => { if (!cancelled) setEdition(ed); })
           .catch(() => {});
       } else {
         setConnection("waiting");
@@ -201,7 +234,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setGain = useCallback(async (strip: number, value: number) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: value, muted: false, mono: false, mc: false, solo: false, karaoke: 0 };
+      const current = next.get(strip) ?? { gain: value, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, gain: value });
       return next;
     });
@@ -215,7 +248,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setMute = useCallback(async (strip: number, muted: boolean) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted, mono: false, mc: false, solo: false, karaoke: 0 };
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, muted });
       return next;
     });
@@ -229,7 +262,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setMono = useCallback(async (strip: number, value: boolean) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted: false, mono: value, mc: false, solo: false, karaoke: 0 };
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, mono: value });
       return next;
     });
@@ -243,7 +276,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setSolo = useCallback(async (strip: number, value: boolean) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: false, solo: value, karaoke: 0 };
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, solo: value });
       return next;
     });
@@ -257,7 +290,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setMc = useCallback(async (strip: number, value: boolean) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: value, solo: false, karaoke: 0 };
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, mc: value });
       return next;
     });
@@ -271,12 +304,42 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
   const setKaraoke = useCallback(async (strip: number, value: number) => {
     setChannels((prev) => {
       const next = new Map(prev);
-      const current = next.get(strip) ?? { gain: 0, muted: false, mono: false, mc: false, solo: false, karaoke: value };
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
       next.set(strip, { ...current, karaoke: value });
       return next;
     });
     try {
       await invoke("vm_set_karaoke", { strip, value });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  /** Reverb send, 0-10 — Banana and Potato, every strip. */
+  const setReverbSend = useCallback(async (strip: number, value: number) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
+      next.set(strip, { ...current, reverbSend: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_reverb_send", { strip, value });
+    } catch {
+      // Silently fail — polling will correct state
+    }
+  }, []);
+
+  /** Delay send, 0-10 — Banana and Potato, every strip. */
+  const setDelaySend = useCallback(async (strip: number, value: number) => {
+    setChannels((prev) => {
+      const next = new Map(prev);
+      const current = next.get(strip) ?? { gain: 0, ...EMPTY_CHANNEL_STATE };
+      next.set(strip, { ...current, delaySend: value });
+      return next;
+    });
+    try {
+      await invoke("vm_set_delay_send", { strip, value });
     } catch {
       // Silently fail — polling will correct state
     }
@@ -290,7 +353,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     dragging.current.delete(strip);
   }, []);
 
-  /** Launch Voicemeeter Banana. Only ever called from an explicit user action. */
+  /** Launch Voicemeeter Potato. Only ever called from an explicit user action. */
   const launchVoicemeeter = useCallback(async () => {
     await invoke("vm_run_voicemeeter");
   }, []);
@@ -300,6 +363,7 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     connected: connection === "connected",
     everConnected,
     error,
+    edition,
     channels,
     levels,
     busLevels,
@@ -310,6 +374,8 @@ export function useVoicemeeter(channelConfigs: ChannelConfig[]) {
     setSolo,
     setMc,
     setKaraoke,
+    setReverbSend,
+    setDelaySend,
     startDragging,
     stopDragging,
     launchVoicemeeter,

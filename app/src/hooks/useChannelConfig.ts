@@ -13,6 +13,7 @@ export function useChannelConfig() {
   const [meterDecay, setMeterDecay] = useState(DEFAULT_METER_DECAY);
   const [loaded, setLoaded] = useState(false);
   const [needsOutputSetup, setNeedsOutputSetup] = useState(false);
+  const [needsChannelSetup, setNeedsChannelSetup] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,6 +24,11 @@ export function useChannelConfig() {
         const savedOut = await store.get<A1Device[]>(OUTPUTS_KEY);
         if (!cancelled && savedCh && savedCh.length > 0) {
           setChannels(savedCh);
+        } else if (!cancelled && (savedCh == null || savedCh.length === 0)) {
+          // No usable saved config — first run, or an install that predates
+          // per-edition defaults. Trigger the edition-aware seed in App.tsx
+          // once the running edition is known, instead of assuming Potato.
+          setNeedsChannelSetup(true);
         }
         if (!cancelled && savedOut && savedOut.length > 0) {
           setOutputs(savedOut);
@@ -36,7 +42,10 @@ export function useChannelConfig() {
         }
       } catch {
         // First run or corrupt store — use defaults
-        if (!cancelled) setNeedsOutputSetup(true);
+        if (!cancelled) {
+          setNeedsOutputSetup(true);
+          setNeedsChannelSetup(true);
+        }
       }
       if (!cancelled) setLoaded(true);
     })();
@@ -73,5 +82,5 @@ export function useChannelConfig() {
     }
   }, []);
 
-  return { channels, saveChannels, outputs, saveOutputs, meterDecay, saveMeterDecay, loaded, needsOutputSetup, setNeedsOutputSetup };
+  return { channels, saveChannels, outputs, saveOutputs, meterDecay, saveMeterDecay, loaded, needsOutputSetup, setNeedsOutputSetup, needsChannelSetup, setNeedsChannelSetup };
 }

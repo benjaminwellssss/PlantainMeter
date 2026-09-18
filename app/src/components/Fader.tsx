@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import { motion, useTransform, useSpring } from "framer-motion";
-import { WHEEL_STEP_DB, UNITY_DB, FADER_COLUMN_MIN_WIDTH, KARAOKE_LABELS } from "../config";
+import { WHEEL_STEP_DB, UNITY_DB, KARAOKE_LABELS, UNITY_POSITION, dbToNorm, normToDb } from "../config";
 import type { ModeKind } from "../config";
 import MuteButton from "./MuteButton";
 import StripButton from "./StripButton";
@@ -10,6 +10,8 @@ interface FaderProps {
   value: number;
   min: number;
   max: number;
+  /** This column's exact rendered width, in px — see useControlUnit. */
+  unit: number;
   muted: boolean;
   /** Strip[i].Mono — hardware strips only. */
   mono: boolean;
@@ -41,6 +43,7 @@ export default function Fader({
   value,
   min,
   max,
+  unit,
   muted,
   mono,
   solo,
@@ -117,8 +120,10 @@ export default function Fader({
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  // Normalized 0..1 where 0 = max dB (top) and 1 = min dB (bottom)
-  const normalized = (max - value) / (max - min);
+  // Normalized 0..1 where 0 = max dB (top) and 1 = min dB (bottom). Uses a
+  // piecewise-linear scale (see dbToNorm) so 0 dB sits at the same relative
+  // position on every fader regardless of this channel's own min/max.
+  const normalized = dbToNorm(value, min, max);
 
   // Spring-animated position for smooth external updates
   const springY = useSpring(normalized, { damping: 30, stiffness: 300 });
@@ -150,7 +155,7 @@ export default function Fader({
   const applyNorm = useCallback(
     (norm: number) => {
       springY.jump(norm);
-      const db = max - norm * (max - min);
+      const db = normToDb(norm, min, max);
       onChange(Math.round(db * 10) / 10);
     },
     [max, min, onChange, springY],
@@ -173,7 +178,7 @@ export default function Fader({
         // event, because preventDefault below suppresses the compatibility
         // mouse events that would normally produce it.
         const target = Math.max(min, Math.min(max, UNITY_DB));
-        applyNorm((max - target) / (max - min));
+        applyNorm(dbToNorm(target, min, max));
         return;
       }
 
@@ -243,14 +248,18 @@ export default function Fader({
     return `${sign}${String(Math.abs(rounded)).padStart(2, "0")} dB`;
   };
 
-  // Unity (0 dB) mark position — hidden if the channel's range doesn't include it.
+  // Unity (0 dB) mark — hidden if the channel's range doesn't include it.
+  // Always at UNITY_POSITION now, same spot on every fader regardless of range.
   const unityInRange = min <= UNITY_DB && UNITY_DB <= max;
-  const unityNorm = (max - UNITY_DB) / (max - min);
 
   return (
     <div
-      className="flex flex-col items-center gap-[clamp(4px,1.2dvh,8px)] flex-1"
-      style={{ minWidth: FADER_COLUMN_MIN_WIDTH }}
+      // flex-1 (not shrink-0) so this fills whatever height its wrapper in
+      // App.tsx has been stretched to — it's nested one level deeper than it
+      // used to be (a sibling FxBox now sits below it in the same column),
+      // so the row's own items-stretch no longer reaches it directly.
+      className="flex flex-col items-center gap-[clamp(4px,1.2dvh,8px)] flex-1 min-h-0"
+      style={{ width: unit }}
     >
       {/* Channel label */}
       <span className="text-crisp text-[clamp(0.65rem,2.6vw,0.9rem)] font-extrabold uppercase tracking-widest text-white truncate w-full text-center">
@@ -258,11 +267,11 @@ export default function Fader({
       </span>
 
       {/* Fader border + track — glows while being dragged, matching the knob.
-          Sized as a % of its own column (not vw) so it can't overshoot when
-          there are many channels; leaves clear space on both sides. */}
+          Exactly the column's own width (unit) unless manually overridden in
+          Settings, so it can never overshoot regardless of channel count. */}
       <div
-        className={`glass-border-glow rounded-[8px] p-[1px] w-full flex-1 flex flex-col min-h-0 transition-shadow duration-150 ${active ? "fader-active" : ""}`}
-        style={{ maxWidth: "var(--fader-max-w, clamp(42px, 88%, 68px))" }}
+        className={`glass-border-glow rounded-[8px] p-[1px] flex-1 flex flex-col min-h-0 transition-shadow duration-150 ${active ? "fader-active" : ""}`}
+        style={{ width: "var(--fader-max-w, 100%)" }}
         onWheel={handleWheel}
       >
         <div className="glass-panel rounded-[7px] p-[clamp(6px,1.2vw,10px)] flex flex-col items-center gap-[clamp(3px,0.7dvh,6px)] flex-1 min-h-0">
@@ -314,7 +323,7 @@ export default function Fader({
                 <div
                   className="absolute left-[-3px] right-[-3px] h-[2px] rounded-full pointer-events-none"
                   style={{
-                    top: `${unityNorm * 100}%`,
+                    top: `${UNITY_POSITION * 100}%`,
                     transform: "translateY(-50%)",
                     backgroundColor: "rgba(255,255,255,0.9)",
                     boxShadow: "0 0 2px rgba(0,0,0,0.6)",
@@ -352,39 +361,20 @@ export default function Fader({
               Voicemeeter's own strip order, stacked above Mute without resizing it. */}
           <div className="flex flex-col gap-[clamp(1px,0.3dvh,2px)] w-full">
             {modeKind === "mono" && (
-              <StripButton
-                label="Mono"
-                active={mono}
-                activeColor="rgba(245,166,35,0.75)"
-                onClick={() => onMonoToggle(!mono)}
-                title="Mono"
-              />
+              <StripButton label="Mono" active={mono} onClick={() => onMonoToggle(!mono)} title="Mono" />
             )}
             {modeKind === "mc" && (
-              <StripButton
-                label="MC"
-                active={mc}
-                activeColor="rgba(56,189,248,0.75)"
-                onClick={() => onMcToggle(!mc)}
-                title="Mute Center — for dialogue"
-              />
+              <StripButton label="MC" active={mc} onClick={() => onMcToggle(!mc)} title="Mute Center — for dialogue" />
             )}
             {modeKind === "karaoke" && (
               <StripButton
                 label={KARAOKE_LABELS[Math.min(Math.max(karaoke, 0), 4)]}
                 active={karaoke > 0}
-                activeColor="rgba(56,189,248,0.75)"
                 onClick={() => onKaraokeChange((karaoke + 1) % 5)}
                 title="Karaoke mode — cycles K, K-M, K-1, K-2, K-center"
               />
             )}
-            <StripButton
-              label="Solo"
-              active={solo}
-              activeColor="rgba(34,197,94,0.75)"
-              onClick={() => onSoloToggle(!solo)}
-              title="Solo"
-            />
+            <StripButton label="Solo" active={solo} onClick={() => onSoloToggle(!solo)} title="Solo" />
           </div>
 
           {/* Mute button — always shown, on every fader */}

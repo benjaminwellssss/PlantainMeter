@@ -52,6 +52,10 @@ export interface StyleSettings {
   globalOpacity: number;
   /** Named window sizes, reachable by right-clicking the minimize button. */
   windowPresets: WindowPreset[];
+  /** Gap between adjacent faders/knobs, as a multiple of one control's width. */
+  gapMultiplier: number;
+  /** Clear space around the whole group, as a multiple of one control's width. */
+  marginMultiplier: number;
 }
 
 /** Sized against the 200x275 minimum in tauri.conf.json. */
@@ -84,4 +88,6 @@ export const DEFAULT_STYLE_SETTINGS: StyleSettings = {
   sizeLocked: false,
   globalOpacity: 1,
   windowPresets: [...DEFAULT_WINDOW_PRESETS],
+  gapMultiplier: 0.5,
+  marginMultiplier: 1,
 };

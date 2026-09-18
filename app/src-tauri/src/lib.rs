@@ -1,6 +1,6 @@
 mod accent;
 mod commands;
-mod voicemeeter;
+pub mod voicemeeter;
 
 use commands::{ShortcutMap, VmState};
 use std::collections::HashMap;
@@ -51,6 +51,7 @@ pub fn run() {
             api: Mutex::new(None),
             polling: Arc::new(AtomicBool::new(false)),
             connected: Arc::new(AtomicBool::new(false)),
+            edition: Arc::new(Mutex::new(None)),
         })
         .manage(ShortcutMap {
             map: Mutex::new(HashMap::new()),
@@ -86,6 +87,9 @@ pub fn run() {
             commands::vm_set_mc,
             commands::vm_set_karaoke,
             commands::vm_get_all_strips,
+            commands::vm_get_edition,
+            commands::vm_set_reverb_send,
+            commands::vm_set_delay_send,
             commands::vm_set_a1_device,
             commands::vm_get_a1_device,
             commands::vm_restart_engine,

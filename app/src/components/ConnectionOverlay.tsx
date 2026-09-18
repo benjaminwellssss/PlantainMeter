@@ -51,7 +51,7 @@ export default function ConnectionOverlay({ connection, error, onLaunch }: Conne
         {connection === "waiting" && (
           <>
             <p className="text-white/50 text-[clamp(0.5rem,1.5vw,0.7rem)] m-0">
-              Voicemeeter Banana isn't running yet.
+              Voicemeeter Potato isn't running yet.
             </p>
             <button
               className="rounded-[4px] border-none px-[clamp(8px,2vw,14px)] py-[clamp(3px,0.7dvh,6px)] text-[clamp(0.55rem,1.8vw,0.75rem)] font-semibold cursor-pointer disabled:opacity-50"

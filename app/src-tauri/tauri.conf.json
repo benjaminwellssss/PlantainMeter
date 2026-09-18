@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
   "productName": "Plantain",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "identifier": "com.plantain.app",
   "build": {
     "frontendDist": "../dist",
@@ -16,8 +16,8 @@
         "title": "Plantain",
         "width": 420,
         "height": 340,
-        "minWidth": 200,
-        "minHeight": 360,
+        "minWidth": 345,
+        "minHeight": 256,
         "resizable": true,
         "decorations": false,
         "transparent": true,

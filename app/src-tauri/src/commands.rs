@@ -1,5 +1,5 @@
 use crate::accent::{get_system_accent_color, AccentColor};
-use crate::voicemeeter::{LoginStatus, VoicemeeterAPI};
+use crate::voicemeeter::{LoginStatus, VoicemeeterAPI, VoicemeeterEdition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +15,25 @@ pub struct VmState {
     /// Whether the audio engine is currently reachable. Maintained by the polling
     /// thread, which is the only thing that can observe Voicemeeter coming back.
     pub connected: Arc<AtomicBool>,
+    /// Which Voicemeeter edition is actually running (Standard/Banana/Potato).
+    /// Strip/bus counts and channel layout differ per edition, so this is set
+    /// once on every fresh connect (vm_login and the poller's recovery path)
+    /// and read by everything that needs to know the strip/bus layout.
+    pub edition: Arc<Mutex<Option<VoicemeeterEdition>>>,
+}
+
+/// Strip counts as (hardware, virtual) for the given edition — see
+/// VoicemeeterEdition::strip_counts. Falls back to Potato's layout (the
+/// superset) if the edition hasn't been detected yet, so a stray call before
+/// the first successful login degrades gracefully instead of panicking.
+fn edition_or_default(edition: &Mutex<Option<VoicemeeterEdition>>) -> VoicemeeterEdition {
+    edition.lock().ok().and_then(|g| *g).unwrap_or(VoicemeeterEdition::Potato)
+}
+
+/// Every input strip index for the given edition, hardware then virtual.
+fn monitored_strips(edition: VoicemeeterEdition) -> Vec<u32> {
+    let (hw, virt) = edition.strip_counts();
+    (0..hw + virt).collect()
 }
 
 /// Connection state reported to the frontend.
@@ -51,6 +70,11 @@ pub struct StripState {
     pub solo: bool,
     /// Karaoke mode, 0-4 — virtual strips only (K, K-M, K-1, K-2, center-scoop).
     pub karaoke: i32,
+    /// Send level into the internal Reverb/Delay FX, 0-10 — every strip on
+    /// Banana and Potato (not Standard, which has no FX section). `None`
+    /// when this edition has no FX section at all.
+    pub reverb_send: Option<f32>,
+    pub delay_send: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,20 +105,19 @@ pub struct AllBusLevels {
     pub levels: Vec<BusLevel>,
 }
 
-/// Monitor all 5 Banana strips — frontend decides which to display
-const MONITORED_STRIPS: &[u32] = &[0, 1, 2, 3, 4];
-
 /// Maps strip index to its first L/R channel pair for GetLevel.
-/// Banana: HW inputs (0-2) = 2 channels each, Virtual inputs (3-4) = 8 channels each.
-/// Channel layout: [0,1] [2,3] [4,5] [6..13] [14..21]
-fn strip_to_channels(strip: u32) -> (i32, i32) {
-    let base: i32 = match strip {
-        0 => 0,
-        1 => 2,
-        2 => 4,
-        3 => 6,  // Virtual Input 1: 8 channels starting at 6
-        4 => 14, // Virtual Input 2: 8 channels starting at 14
-        _ => 0,
+/// Hardware input strips are always 2 channels (stereo); virtual input strips
+/// are always 8 channels (they carry multichannel app audio) — true across
+/// every edition, only the strip *counts* differ. So Banana's virtual strips
+/// start right after its 3 hardware strips (base 6), Potato's after its 5
+/// (base 10), etc. — this generalizes what was previously a hardcoded Potato
+/// table.
+fn strip_to_channels(edition: VoicemeeterEdition, strip: u32) -> (i32, i32) {
+    let (hw, _virt) = edition.strip_counts();
+    let base: i32 = if strip < hw {
+        (strip * 2) as i32
+    } else {
+        (hw * 2) as i32 + ((strip - hw) * 8) as i32
     };
     (base, base + 1)
 }
@@ -107,20 +130,31 @@ fn read_bus_level(api: &VoicemeeterAPI, bus: u32) -> BusLevel {
     BusLevel { bus, level: level_l.max(level_r), gain }
 }
 
-fn read_strip_level(api: &VoicemeeterAPI, strip: u32) -> StripLevel {
-    let (ch_l, ch_r) = strip_to_channels(strip);
+fn read_strip_level(api: &VoicemeeterAPI, edition: VoicemeeterEdition, strip: u32) -> StripLevel {
+    let (ch_l, ch_r) = strip_to_channels(edition, strip);
     let level_l = api.get_level(1, ch_l).unwrap_or(0.0);
     let level_r = api.get_level(1, ch_r).unwrap_or(0.0);
     StripLevel { strip, level: level_l.max(level_r) }
 }
 
-fn read_strip(api: &VoicemeeterAPI, strip: u32) -> StripState {
+fn read_strip(api: &VoicemeeterAPI, edition: VoicemeeterEdition, strip: u32) -> StripState {
     let gain = api.get_float(&format!("Strip[{strip}].Gain")).unwrap_or(0.0);
     let mute_val = api.get_float(&format!("Strip[{strip}].Mute")).unwrap_or(0.0);
     let mono_val = api.get_float(&format!("Strip[{strip}].Mono")).unwrap_or(0.0);
     let mc_val = api.get_float(&format!("Strip[{strip}].MC")).unwrap_or(0.0);
     let solo_val = api.get_float(&format!("Strip[{strip}].Solo")).unwrap_or(0.0);
     let karaoke_val = api.get_float(&format!("Strip[{strip}].K")).unwrap_or(0.0);
+
+    // Reverb/Delay sends — every strip on Banana and Potato.
+    let (reverb_send, delay_send) = if edition.has_fx_sends() {
+        (
+            api.get_float(&format!("Strip[{strip}].Reverb")).ok(),
+            api.get_float(&format!("Strip[{strip}].Delay")).ok(),
+        )
+    } else {
+        (None, None)
+    };
+
     StripState {
         strip,
         gain,
@@ -129,6 +163,8 @@ fn read_strip(api: &VoicemeeterAPI, strip: u32) -> StripState {
         mc: mc_val >= 1.0,
         solo: solo_val >= 1.0,
         karaoke: karaoke_val.round() as i32,
+        reverb_send,
+        delay_send,
     }
 }
 
@@ -155,6 +191,11 @@ pub fn vm_login(state: State<VmState>, app: AppHandle) -> Result<VmConnection, S
             // rc == 1 means "logged in, but Voicemeeter is not running" -- a valid
             // handle we keep so the poller can detect the app starting up later.
             let status = api.login()?;
+            if status == LoginStatus::Connected {
+                if let Ok(ed) = api.voicemeeter_type() {
+                    *state.edition.lock().map_err(|e| e.to_string())? = Some(ed);
+                }
+            }
             *guard = Some(api);
             state
                 .connected
@@ -195,19 +236,33 @@ fn spawn_poller(polling: Arc<AtomicBool>, app_handle: AppHandle) {
                                 // Resync fully when the engine comes back, otherwise the
                                 // UI keeps showing pre-restart gains.
                                 let recovered = last_healthy != Some(true);
+
+                                if recovered {
+                                    // Edition can only be read once the engine is actually
+                                    // up, and a reconnect can in principle be a different
+                                    // edition (Voicemeeter relaunched after being switched).
+                                    if let Ok(ed) = api.voicemeeter_type() {
+                                        if let Ok(mut slot) = vm_state.edition.lock() {
+                                            *slot = Some(ed);
+                                        }
+                                    }
+                                }
+                                let edition = edition_or_default(&vm_state.edition);
+                                let strips_list = monitored_strips(edition);
+
                                 if dirty || recovered {
-                                    let strips: Vec<StripState> = MONITORED_STRIPS
+                                    let strips: Vec<StripState> = strips_list
                                         .iter()
-                                        .map(|&s| read_strip(api, s))
+                                        .map(|&s| read_strip(api, edition, s))
                                         .collect();
                                     let _ = app_handle
                                         .emit("vm:state-update", AllStripsState { strips });
                                 }
 
                                 // Always read levels (they change continuously)
-                                let levels: Vec<StripLevel> = MONITORED_STRIPS
+                                let levels: Vec<StripLevel> = strips_list
                                     .iter()
-                                    .map(|&s| read_strip_level(api, s))
+                                    .map(|&s| read_strip_level(api, edition, s))
                                     .collect();
                                 let _ = app_handle.emit("vm:levels", AllStripLevels { levels });
 
@@ -313,11 +368,37 @@ pub fn vm_get_all_strips(state: State<VmState>) -> Result<AllStripsState, String
     let api = guard.as_ref().ok_or("Not connected")?;
     // Call is_dirty first to sync parameters
     let _ = api.is_dirty();
-    let strips = MONITORED_STRIPS
+    let edition = edition_or_default(&state.edition);
+    let strips = monitored_strips(edition)
         .iter()
-        .map(|&s| read_strip(api, s))
+        .map(|&s| read_strip(api, edition, s))
         .collect();
     Ok(AllStripsState { strips })
+}
+
+/// Which Voicemeeter edition is running — `None` until the first successful
+/// connect. Lets the frontend adapt strip counts/labels and gate
+/// edition-only features (the Denoiser/Voice-Modeler FX is Potato-only)
+/// instead of assuming Potato's layout everywhere.
+#[tauri::command]
+pub fn vm_get_edition(state: State<VmState>) -> Result<Option<VoicemeeterEdition>, String> {
+    Ok(*state.edition.lock().map_err(|e| e.to_string())?)
+}
+
+/// Send level into the internal Reverb FX, 0-10 — Banana and Potato only.
+#[tauri::command]
+pub fn vm_set_reverb_send(state: State<VmState>, strip: u32, value: f32) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].Reverb"), value.clamp(0.0, 10.0))
+}
+
+/// Send level into the internal Delay FX, 0-10 — Banana and Potato only.
+#[tauri::command]
+pub fn vm_set_delay_send(state: State<VmState>, strip: u32, value: f32) -> Result<(), String> {
+    let guard = state.api.lock().map_err(|e| e.to_string())?;
+    let api = guard.as_ref().ok_or("Not connected")?;
+    api.set_float(&format!("Strip[{strip}].Delay"), value.clamp(0.0, 10.0))
 }
 
 #[tauri::command]
@@ -391,7 +472,7 @@ pub fn vm_restart_engine(state: State<VmState>) -> Result<(), String> {
     api.restart_engine()
 }
 
-/// Launch Voicemeeter Banana. Only ever reached from an explicit user action.
+/// Launch Voicemeeter Potato. Only ever reached from an explicit user action.
 #[tauri::command]
 pub fn vm_run_voicemeeter(state: State<VmState>) -> Result<(), String> {
     let guard = state.api.lock().map_err(|e| e.to_string())?;

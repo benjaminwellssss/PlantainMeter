@@ -14,9 +14,59 @@ type FnGetLevel = unsafe extern "C" fn(c_long, c_long, *mut c_float) -> c_long;
 type FnOutputGetDeviceNumber = unsafe extern "C" fn() -> c_long;
 type FnOutputGetDeviceDesc = unsafe extern "C" fn(c_long, *mut c_long, *mut c_char, *mut c_char) -> c_long;
 type FnRunVoicemeeter = unsafe extern "C" fn(c_long) -> c_long;
+type FnGetVoicemeeterType = unsafe extern "C" fn(*mut c_long) -> c_long;
 
-/// Voicemeeter Banana — the edition MiniMeeter targets (see strip layout in commands.rs).
-const VOICEMEETER_TYPE_BANANA: c_long = 2;
+/// Voicemeeter Potato — used when launching via VBVMR_RunVoicemeeter, since that
+/// call needs a specific edition to start (Plantain itself now supports whichever
+/// edition is actually running — see `VoicemeeterEdition` / `voicemeeter_type()`).
+/// 1 = Standard, 2 = Banana, 3 = Potato (VB-Audio Remote API convention).
+const VOICEMEETER_TYPE_POTATO: c_long = 3;
+
+/// The Voicemeeter edition actually running, as reported by VBVMR_GetVoicemeeterType.
+/// Strip/bus counts and channel layout differ per edition — see commands.rs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VoicemeeterEdition {
+    Standard,
+    Banana,
+    Potato,
+}
+
+impl VoicemeeterEdition {
+    pub fn from_type_code(code: c_long) -> Option<Self> {
+        match code {
+            1 => Some(Self::Standard),
+            2 => Some(Self::Banana),
+            3 => Some(Self::Potato),
+            _ => None,
+        }
+    }
+
+    /// Number of input strips: (hardware, virtual).
+    pub fn strip_counts(self) -> (u32, u32) {
+        match self {
+            VoicemeeterEdition::Standard => (2, 1),
+            VoicemeeterEdition::Banana => (3, 2),
+            VoicemeeterEdition::Potato => (5, 3),
+        }
+    }
+
+    /// Number of output buses: (hardware "A" buses, virtual "B" buses).
+    pub fn bus_counts(self) -> (u32, u32) {
+        match self {
+            VoicemeeterEdition::Standard => (1, 1),
+            VoicemeeterEdition::Banana => (3, 2),
+            VoicemeeterEdition::Potato => (5, 3),
+        }
+    }
+
+    /// The internal Reverb/Delay send effects — every strip (hardware and
+    /// virtual) gets a send-level knob into them. Banana and Potato only;
+    /// Standard has no FX section at all.
+    pub fn has_fx_sends(self) -> bool {
+        matches!(self, VoicemeeterEdition::Banana | VoicemeeterEdition::Potato)
+    }
+}
 
 /// Outcome of VBVMR_Login. The DLL distinguishes "connected" from
 /// "logged in, but the Voicemeeter application isn't running" (rc == 1),
@@ -42,6 +92,7 @@ pub struct VoicemeeterAPI {
     fn_output_get_device_number: Option<FnOutputGetDeviceNumber>,
     fn_output_get_device_desc: Option<FnOutputGetDeviceDesc>,
     fn_run_voicemeeter: Option<FnRunVoicemeeter>,
+    fn_get_voicemeeter_type: Option<FnGetVoicemeeterType>,
     logged_in: bool,
 }
 
@@ -91,6 +142,8 @@ impl VoicemeeterAPI {
                 lib.get::<FnOutputGetDeviceDesc>(b"VBVMR_Output_GetDeviceDescA").ok().map(|s| *s);
             let fn_run_voicemeeter: Option<FnRunVoicemeeter> =
                 lib.get::<FnRunVoicemeeter>(b"VBVMR_RunVoicemeeter").ok().map(|s| *s);
+            let fn_get_voicemeeter_type: Option<FnGetVoicemeeterType> =
+                lib.get::<FnGetVoicemeeterType>(b"VBVMR_GetVoicemeeterType").ok().map(|s| *s);
 
             Ok(Self {
                 fn_login: *fn_login,
@@ -104,6 +157,7 @@ impl VoicemeeterAPI {
                 fn_output_get_device_number,
                 fn_output_get_device_desc,
                 fn_run_voicemeeter,
+                fn_get_voicemeeter_type,
                 _lib: lib,
                 logged_in: false,
             })
@@ -128,7 +182,7 @@ impl VoicemeeterAPI {
                 Ok(LoginStatus::NotRunning)
             }
             _ => Err(format!(
-                "VBVMR_Login failed with code {rc}. Is Voicemeeter Banana installed correctly?"
+                "VBVMR_Login failed with code {rc}. Is Voicemeeter Potato installed correctly?"
             )),
         }
     }
@@ -142,18 +196,35 @@ impl VoicemeeterAPI {
         self.set_float("Command.Restart", 1.0)
     }
 
-    /// Launch Voicemeeter Banana via the DLL. Returns an error if the running
+    /// Launch Voicemeeter Potato via the DLL. Returns an error if the running
     /// DLL is too old to export VBVMR_RunVoicemeeter.
     pub fn run_voicemeeter(&self) -> Result<(), String> {
         let f = self
             .fn_run_voicemeeter
             .ok_or("This Voicemeeter DLL cannot launch the application (VBVMR_RunVoicemeeter missing)")?;
-        let rc = unsafe { f(VOICEMEETER_TYPE_BANANA) };
+        let rc = unsafe { f(VOICEMEETER_TYPE_POTATO) };
         if rc == 0 {
             Ok(())
         } else {
             Err(format!("VBVMR_RunVoicemeeter failed: {rc}"))
         }
+    }
+
+    /// Which Voicemeeter edition is actually running (Standard/Banana/Potato).
+    /// Only meaningful once `login()` reports `Connected` — the type code isn't
+    /// populated while no engine is attached.
+    pub fn voicemeeter_type(&self) -> Result<VoicemeeterEdition, String> {
+        self.require_login()?;
+        let f = self
+            .fn_get_voicemeeter_type
+            .ok_or("This Voicemeeter DLL cannot report its type (VBVMR_GetVoicemeeterType missing)")?;
+        let mut code: c_long = 0;
+        let rc = unsafe { f(&mut code) };
+        if rc != 0 {
+            return Err(format!("VBVMR_GetVoicemeeterType failed: {rc}"));
+        }
+        VoicemeeterEdition::from_type_code(code)
+            .ok_or_else(|| format!("Unknown Voicemeeter type code: {code}"))
     }
 
     pub fn logout(&mut self) {

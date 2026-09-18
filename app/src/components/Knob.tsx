@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useSpring, useMotionValueEvent } from "framer-motion";
-import { WHEEL_STEP_DB, UNITY_DB, KNOB_COLUMN_MIN_WIDTH, KARAOKE_LABELS } from "../config";
+import { WHEEL_STEP_DB, UNITY_DB, KARAOKE_LABELS, UNITY_POSITION, dbToNorm, normToDb } from "../config";
 import type { ModeKind } from "../config";
 import MuteButton from "./MuteButton";
 import StripButton from "./StripButton";
@@ -10,6 +10,8 @@ interface KnobProps {
   value: number;
   min: number;
   max: number;
+  /** This column's exact rendered width, in px — see useControlUnit. */
+  unit: number;
   muted: boolean;
   /** Strip[i].Mono — hardware strips only. */
   mono: boolean;
@@ -80,6 +82,7 @@ export default function Knob({
   value,
   min,
   max,
+  unit,
   muted,
   mono,
   solo,
@@ -156,8 +159,11 @@ export default function Knob({
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  // Normalized 0..1 where 0 = min (lower-left rest position), 1 = max (lower-right)
-  const norm = (value - min) / (max - min);
+  // Normalized 0..1 where 0 = min (lower-left rest position), 1 = max (lower-right).
+  // Piecewise-linear (see dbToNorm, which uses the opposite 0=max convention —
+  // hence the 1-minus) so 0 dB sits at the same relative angle on every knob
+  // regardless of this channel's own min/max.
+  const norm = 1 - dbToNorm(value, min, max);
 
   // Spring-animated position for smooth external updates
   const springNorm = useSpring(norm, { damping: 30, stiffness: 300 });
@@ -205,7 +211,7 @@ export default function Knob({
       const clamped = Math.max(0, Math.min(1, n));
       springNorm.jump(clamped);
       updateVisuals(clamped);
-      const db = min + clamped * (max - min);
+      const db = normToDb(1 - clamped, min, max);
       onChange(Math.round(db * 10) / 10);
     },
     [max, min, onChange, springNorm, updateVisuals],
@@ -222,7 +228,7 @@ export default function Knob({
       if (isDoubleClick) {
         // Snap to unity (0 dB), same as double-clicking a fader.
         const target = Math.max(min, Math.min(max, UNITY_DB));
-        applyNorm((target - min) / (max - min));
+        applyNorm(1 - dbToNorm(target, min, max));
         return;
       }
 
@@ -282,28 +288,28 @@ export default function Knob({
   };
 
   // Unity (0 dB) tick — hidden if the channel's range doesn't include it.
+  // Always at the same angle now, regardless of this channel's own min/max.
   const unityInRange = min <= UNITY_DB && UNITY_DB <= max;
-  const unityAngle = TRACK_START + ((UNITY_DB - min) / (max - min)) * SWEEP;
+  const unityAngle = TRACK_START + (1 - UNITY_POSITION) * SWEEP;
   const unityInner = polarToCartesian(CX, CY, R_TRACK - 3, unityAngle);
   const unityOuter = polarToCartesian(CX, CY, R_TRACK + 3, unityAngle);
 
   return (
     <div
-      className="flex flex-col items-center justify-start gap-[clamp(4px,1.2dvh,8px)] flex-1 h-full"
-      style={{ minWidth: KNOB_COLUMN_MIN_WIDTH }}
+      className="flex flex-col items-center justify-center shrink-0 gap-[clamp(4px,1.2dvh,8px)]"
+      style={{ width: unit }}
     >
-      {/* Channel label — laid out top-first (not centered) so it's the last
-          thing to ever get cropped if a column runs short on height. */}
+      {/* Channel label — shrink-0 so the flex-shrink algorithm takes space
+          from elsewhere first if a column ever runs short on height. */}
       <span className="text-crisp text-[clamp(0.65rem,2.6vw,0.9rem)] font-extrabold uppercase tracking-widest text-white truncate w-full text-center shrink-0">
         {label}
       </span>
 
-      {/* Knob border — sized as a % of its own column (not vw), so it can't
-          overshoot when there are many channels; leaves clear space on both
-          sides within the column, on top of the row's own gap. */}
+      {/* Knob border — exactly the column's own width (unit), so it can never
+          overshoot regardless of channel count; clear space comes from the
+          row's own margins/gaps, not extra padding inside the column. */}
       <div
-        className="glass-border-glow rounded-[8px] p-[1px] flex flex-col items-center"
-        style={{ width: "clamp(130px, 88%, 160px)" }}
+        className="glass-border-glow rounded-[8px] p-[1px] w-full flex flex-col items-center"
         onWheel={handleWheel}
       >
         <div className="glass-panel rounded-[7px] p-[clamp(6px,1.2vw,10px)] flex flex-col items-center gap-[clamp(3px,0.7dvh,6px)] w-full">
@@ -316,7 +322,7 @@ export default function Knob({
               Glows while being turned (see .knob-active). */}
           <div
             className={`relative touch-none cursor-grab active:cursor-grabbing shrink-0 rounded-full transition-shadow duration-150 ${active ? "knob-active" : ""}`}
-            style={{ width: "clamp(80px,85%,130px)", aspectRatio: "1 / 1" }}
+            style={{ width: "clamp(48px,85%,78px)", aspectRatio: "1 / 1" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -369,39 +375,20 @@ export default function Knob({
               Voicemeeter's own strip order, stacked above Mute without resizing it. */}
           <div className="flex flex-col gap-[clamp(1px,0.3dvh,2px)] w-full">
             {modeKind === "mono" && (
-              <StripButton
-                label="Mono"
-                active={mono}
-                activeColor="rgba(245,166,35,0.75)"
-                onClick={() => onMonoToggle(!mono)}
-                title="Mono"
-              />
+              <StripButton label="Mono" active={mono} onClick={() => onMonoToggle(!mono)} title="Mono" />
             )}
             {modeKind === "mc" && (
-              <StripButton
-                label="MC"
-                active={mc}
-                activeColor="rgba(56,189,248,0.75)"
-                onClick={() => onMcToggle(!mc)}
-                title="Mute Center — for dialogue"
-              />
+              <StripButton label="MC" active={mc} onClick={() => onMcToggle(!mc)} title="Mute Center — for dialogue" />
             )}
             {modeKind === "karaoke" && (
               <StripButton
                 label={KARAOKE_LABELS[Math.min(Math.max(karaoke, 0), 4)]}
                 active={karaoke > 0}
-                activeColor="rgba(56,189,248,0.75)"
                 onClick={() => onKaraokeChange((karaoke + 1) % 5)}
                 title="Karaoke mode — cycles K, K-M, K-1, K-2, K-center"
               />
             )}
-            <StripButton
-              label="Solo"
-              active={solo}
-              activeColor="rgba(34,197,94,0.75)"
-              onClick={() => onSoloToggle(!solo)}
-              title="Solo"
-            />
+            <StripButton label="Solo" active={solo} onClick={() => onSoloToggle(!solo)} title="Solo" />
           </div>
 
           {/* Mute button — always shown, on every fader */}
