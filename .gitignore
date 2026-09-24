@@ -22,6 +22,7 @@ Thumbs.db
 # Agent instructions
 AGENTS.md
 GEMINI.md
+CLAUDE.md
 .claude/
 
 # Temp
